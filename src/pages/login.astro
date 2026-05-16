@@ -24,16 +24,16 @@ if (Astro.request.method === "POST") {
 	if (!isAuthConfigured) {
 		errorMessage = "A bejelentkezés jelenleg nem érhető el.";
 	} else {
-	const formData = await Astro.request.formData();
-	const token = formData.get("token");
+		const formData = await Astro.request.formData();
+		const token = formData.get("token");
 
-	if (typeof token === "string" && token === ADMIN_TOKEN) {
-		const sessionValue = await createSessionCookieValue(token, SESSION_SECRET);
-		Astro.cookies.set(SESSION_COOKIE_NAME, sessionValue, SESSION_COOKIE_OPTIONS);
-		return Astro.redirect("/");
-	}
+		if (typeof token === "string" && token === ADMIN_TOKEN) {
+			const sessionValue = await createSessionCookieValue(token, SESSION_SECRET);
+			Astro.cookies.set(SESSION_COOKIE_NAME, sessionValue, SESSION_COOKIE_OPTIONS);
+			return Astro.redirect("/");
+		}
 
-	errorMessage = "Érvénytelen token.";
+		errorMessage = "Érvénytelen token.";
 	}
 }
 ---
