@@ -1,0 +1,73 @@
+---
+import AdminLayout from "../../components/AdminLayout.astro";
+import { getAuditLog } from "../../utils/logs";
+
+const env = Astro.locals.runtime.env;
+const encodedId = Astro.params.id ?? "";
+let key = "";
+
+try {
+key = decodeURIComponent(encodedId);
+} catch {
+return Astro.redirect("/logs");
+}
+
+const log = await getAuditLog(env.AUDIT_LOGS, key);
+if (!log) {
+return Astro.redirect("/logs");
+}
+---
+
+<AdminLayout title="Audit log részlet" description="Audit log részletes nézete">
+<h1>Audit log részlet</h1>
+<p><a href="/logs">← Vissza a listához</a></p>
+
+<dl>
+<div>
+<dt>Időpont</dt>
+<dd>{new Date(log.timestamp).toLocaleString("hu-HU")}</dd>
+</div>
+<div>
+<dt>Felhasználó</dt>
+<dd>{log.userEmail || "-"}</dd>
+</div>
+<div>
+<dt>Tool</dt>
+<dd>{log.tool || "-"}</dd>
+</div>
+<div>
+<dt>Állapot</dt>
+<dd>{log.success ? "Siker" : "Hiba"}</dd>
+</div>
+<div>
+<dt>Objektum kulcs</dt>
+<dd><code>{log.key}</code></dd>
+</div>
+</dl>
+
+<h2>Request payload</h2>
+<pre><code>{JSON.stringify(log.requestPayload, null, 2)}</code></pre>
+
+<h2>Response payload</h2>
+<pre><code>{JSON.stringify(log.responsePayload, null, 2)}</code></pre>
+</AdminLayout>
+
+<style>
+dl {
+display: grid;
+gap: 0.65rem;
+}
+
+dt {
+font-weight: 700;
+}
+
+dd {
+margin: 0;
+}
+
+pre {
+overflow: auto;
+max-height: 24rem;
+}
+</style>
