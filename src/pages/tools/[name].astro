@@ -1,0 +1,109 @@
+---
+import AdminLayout from "../../components/AdminLayout.astro";
+import { fetchToolsFromMcp } from "../../utils/tools";
+import { listAllUsers, updateToolMembership } from "../../utils/users";
+
+const env = Astro.locals.runtime.env;
+const encodedName = Astro.params.name ?? "";
+let toolName = "";
+
+try {
+toolName = decodeURIComponent(encodedName);
+} catch {
+return Astro.redirect("/tools");
+}
+
+let feedback = "";
+const [tools, users] = await Promise.all([fetchToolsFromMcp(env), listAllUsers(env.USERS_KV)]);
+const tool = tools.find((candidate) => candidate.name === toolName);
+
+if (!tool) {
+return Astro.redirect("/tools");
+}
+
+if (Astro.request.method === "POST") {
+const formData = await Astro.request.formData();
+const enabledUsers = formData
+.getAll("enabledUsers")
+.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+await updateToolMembership(env.USERS_KV, toolName, enabledUsers);
+feedback = "Tool engedélyezések mentve.";
+}
+
+const refreshedUsers = await listAllUsers(env.USERS_KV);
+const enabledSet = new Set(
+refreshedUsers.filter((user) => user.tools.includes(toolName)).map((user) => user.email),
+);
+---
+
+<AdminLayout title={`Tool: ${toolName}`} description="Tool részletek és engedélyek kezelése">
+<h1>{toolName}</h1>
+<p><a href="/tools">← Vissza a tool listához</a></p>
+
+{feedback && <p class="ok-message">{feedback}</p>}
+
+<section>
+<h2>Leírás</h2>
+<p>{tool.description || "Nincs leírás."}</p>
+</section>
+
+<section>
+<h2>Input séma</h2>
+<pre><code>{JSON.stringify(tool.inputSchema, null, 2)}</code></pre>
+</section>
+
+<section>
+<h2>Engedélyezett felhasználók</h2>
+<form method="post" class="permissions-form">
+<ul>
+{refreshedUsers.length === 0 ? (
+<li>Nincs felhasználó.</li>
+) : (
+refreshedUsers.map((user) => (
+<li>
+<label>
+<input
+type="checkbox"
+name="enabledUsers"
+value={user.email}
+checked={enabledSet.has(user.email)}
+/>
+{user.email}
+</label>
+</li>
+))
+)}
+</ul>
+<button type="submit">Mentés</button>
+</form>
+</section>
+</AdminLayout>
+
+<style>
+pre {
+overflow: auto;
+max-height: 24rem;
+}
+
+.permissions-form ul {
+list-style: none;
+padding: 0;
+display: grid;
+gap: 0.5rem;
+}
+
+.permissions-form label {
+display: flex;
+gap: 0.5rem;
+align-items: center;
+}
+
+button {
+font: inherit;
+padding: 0.5rem;
+}
+
+.ok-message {
+color: #146c2e;
+}
+</style>

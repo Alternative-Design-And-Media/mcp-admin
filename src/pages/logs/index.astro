@@ -1,0 +1,137 @@
+---
+import AdminLayout from "../../components/AdminLayout.astro";
+import { listAuditLogs } from "../../utils/logs";
+
+const query = Astro.url.searchParams;
+const filters = {
+user: query.get("user")?.trim() || undefined,
+tool: query.get("tool")?.trim() || undefined,
+from: query.get("from")?.trim() || undefined,
+to: query.get("to")?.trim() || undefined,
+};
+const cursor = query.get("cursor") ?? undefined;
+
+const result = await listAuditLogs(Astro.locals.runtime.env.AUDIT_LOGS, filters, {
+cursor,
+limit: 20,
+});
+
+const nextUrl = new URL(Astro.url.pathname, Astro.url);
+if (result.nextCursor) {
+nextUrl.searchParams.set("cursor", result.nextCursor);
+}
+for (const [key, value] of Object.entries(filters)) {
+if (value) {
+nextUrl.searchParams.set(key, value);
+}
+}
+
+const exportUrl = new URL("/logs/export.csv", Astro.url);
+for (const [key, value] of Object.entries(filters)) {
+if (value) {
+exportUrl.searchParams.set(key, value);
+}
+}
+---
+
+<AdminLayout title="Audit logok" description="Audit logok megjelenítése és szűrése">
+<h1>Audit logok</h1>
+
+<form method="get" class="filters">
+<label>
+Felhasználó
+<input type="search" name="user" value={filters.user ?? ""} placeholder="user@ceg.hu" />
+</label>
+<label>
+Tool
+<input type="search" name="tool" value={filters.tool ?? ""} placeholder="tools/list" />
+</label>
+<label>
+Kezdő dátum
+<input type="datetime-local" name="from" value={filters.from ?? ""} />
+</label>
+<label>
+Záró dátum
+<input type="datetime-local" name="to" value={filters.to ?? ""} />
+</label>
+<div class="buttons">
+<button type="submit">Szűrés</button>
+<a href={exportUrl.toString()}>CSV export</a>
+</div>
+</form>
+
+<table>
+<thead>
+<tr>
+<th>Időpont</th>
+<th>Felhasználó</th>
+<th>Tool</th>
+<th>Állapot</th>
+<th>Kérés összefoglaló</th>
+</tr>
+</thead>
+<tbody>
+{result.logs.length === 0 ? (
+<tr>
+<td colspan="5">Nincs találat.</td>
+</tr>
+) : (
+result.logs.map((log) => (
+<tr>
+<td><a href={`/logs/${log.id}`}>{new Date(log.timestamp).toLocaleString("hu-HU")}</a></td>
+<td>{log.userEmail || "-"}</td>
+<td>{log.tool || "-"}</td>
+<td>{log.success ? "Siker" : "Hiba"}</td>
+<td>{log.requestSummary || "-"}</td>
+</tr>
+))
+)}
+</tbody>
+</table>
+
+{result.nextCursor && (
+<p class="pagination">
+<a href={nextUrl.toString()}>Következő oldal</a>
+</p>
+)}
+</AdminLayout>
+
+<style>
+.filters {
+display: grid;
+gap: 0.75rem;
+margin-bottom: 1rem;
+}
+
+label {
+display: grid;
+gap: 0.35rem;
+}
+
+input,
+button {
+font: inherit;
+padding: 0.5rem;
+}
+
+.buttons {
+display: flex;
+gap: 0.75rem;
+align-items: center;
+}
+
+table {
+border-collapse: collapse;
+}
+
+th,
+td {
+border: 1px solid rgb(var(--gray-light));
+padding: 0.5rem;
+vertical-align: top;
+}
+
+.pagination {
+margin-top: 1rem;
+}
+</style>

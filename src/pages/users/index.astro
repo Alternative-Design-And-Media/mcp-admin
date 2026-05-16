@@ -1,0 +1,163 @@
+---
+import AdminLayout from "../../components/AdminLayout.astro";
+import { isValidEmail, listUsers, parseScopesInput, parseToolsInput, upsertUser } from "../../utils/users";
+
+const env = Astro.locals.runtime.env;
+const query = Astro.url.searchParams;
+const emailFilter = query.get("q")?.trim() ?? "";
+const cursor = query.get("cursor") ?? undefined;
+const pageSize = 20;
+
+let feedback = "";
+let errorMessage = "";
+
+if (Astro.request.method === "POST") {
+const formData = await Astro.request.formData();
+const email = String(formData.get("email") ?? "").trim();
+const tools = parseToolsInput(String(formData.get("tools") ?? ""));
+const scopes = parseScopesInput(String(formData.get("scopes") ?? ""));
+
+if (!isValidEmail(email)) {
+errorMessage = "Érvénytelen email cím.";
+} else {
+await upsertUser(env.USERS_KV, {
+email,
+tools,
+scopes,
+status: "active",
+lastLoginAt: null,
+});
+feedback = `Felhasználó mentve: ${email.toLowerCase()}`;
+}
+}
+
+const usersPage = await listUsers(env.USERS_KV, {
+cursor,
+limit: pageSize,
+emailFilter,
+});
+
+const nextUrl = new URL(Astro.url.pathname, Astro.url);
+if (emailFilter) {
+nextUrl.searchParams.set("q", emailFilter);
+}
+if (usersPage.cursor) {
+nextUrl.searchParams.set("cursor", usersPage.cursor);
+}
+---
+
+<AdminLayout title="Felhasználók" description="Felhasználók és jogosultságok kezelése">
+<h1>Felhasználók</h1>
+
+<form method="get" class="filter-form">
+<label for="q">Email szűrő</label>
+<input id="q" name="q" type="search" value={emailFilter} placeholder="pelda@ceg.hu" />
+<button type="submit">Szűrés</button>
+</form>
+
+{feedback && <p class="ok-message">{feedback}</p>}
+{errorMessage && <p class="error-message">{errorMessage}</p>}
+
+<section>
+<h2>Új felhasználó</h2>
+<form method="post" class="new-user-form">
+<label>
+Email
+<input name="email" type="email" required />
+</label>
+<label>
+Kezdeti toolok (vesszővel)
+<input name="tools" type="text" placeholder="tools/list,logs/read" />
+</label>
+<label>
+Scope-ok (vesszővel)
+<input name="scopes" type="text" placeholder="admin,read" />
+</label>
+<button type="submit">Felhasználó létrehozása</button>
+</form>
+</section>
+
+<section>
+<h2>Felhasználó lista</h2>
+<table>
+<thead>
+<tr>
+<th>Email</th>
+<th>Engedélyezett toolok</th>
+<th>Utolsó bejelentkezés</th>
+<th>Státusz</th>
+</tr>
+</thead>
+<tbody>
+{usersPage.users.length === 0 ? (
+<tr>
+<td colspan="4">Nincs találat.</td>
+</tr>
+) : (
+usersPage.users.map((user) => (
+<tr>
+<td><a href={`/users/${encodeURIComponent(user.email)}`}>{user.email}</a></td>
+<td>{user.tools.join(", ") || "-"}</td>
+<td>{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString("hu-HU") : "-"}</td>
+<td>{user.status === "active" ? "Aktív" : "Letiltott"}</td>
+</tr>
+))
+)}
+</tbody>
+</table>
+{usersPage.cursor && (
+<p class="pagination">
+<a href={nextUrl.toString()}>Következő oldal</a>
+</p>
+)}
+</section>
+</AdminLayout>
+
+<style>
+.filter-form,
+.new-user-form {
+display: grid;
+gap: 0.75rem;
+margin-bottom: 1.25rem;
+}
+
+.new-user-form {
+border: 1px solid rgb(var(--gray-light));
+padding: 1rem;
+border-radius: 0.5rem;
+}
+
+label {
+display: grid;
+gap: 0.35rem;
+}
+
+input,
+button {
+font: inherit;
+padding: 0.5rem;
+}
+
+table {
+border-collapse: collapse;
+}
+
+th,
+td {
+border: 1px solid rgb(var(--gray-light));
+padding: 0.5rem;
+vertical-align: top;
+}
+
+.ok-message {
+color: #146c2e;
+}
+
+.error-message {
+color: #b40022;
+}
+
+.pagination {
+margin-top: 1rem;
+}
+</style>
