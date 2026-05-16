@@ -1,0 +1,160 @@
+---
+import AdminLayout from "../../components/AdminLayout.astro";
+import {
+deleteUser,
+getUser,
+isValidEmail,
+parseScopesInput,
+parseToolsInput,
+setUserStatus,
+upsertUser,
+} from "../../utils/users";
+
+const env = Astro.locals.runtime.env;
+const encodedEmail = Astro.params.email ?? "";
+let email = "";
+
+try {
+email = decodeURIComponent(encodedEmail);
+} catch {
+return Astro.redirect("/users");
+}
+
+if (!isValidEmail(email)) {
+return Astro.redirect("/users");
+}
+
+let user = await getUser(env.USERS_KV, email);
+if (!user) {
+return Astro.redirect("/users");
+}
+
+let feedback = "";
+let errorMessage = "";
+
+if (Astro.request.method === "POST") {
+const formData = await Astro.request.formData();
+const action = String(formData.get("action") ?? "save");
+
+if (action === "delete") {
+await deleteUser(env.USERS_KV, email);
+return Astro.redirect("/users?deleted=1");
+}
+
+if (action === "disable") {
+await setUserStatus(env.USERS_KV, email, "disabled");
+feedback = "Felhasználó letiltva.";
+}
+
+if (action === "enable") {
+await setUserStatus(env.USERS_KV, email, "active");
+feedback = "Felhasználó aktiválva.";
+}
+
+if (action === "save") {
+const tools = parseToolsInput(String(formData.get("tools") ?? ""));
+const scopes = parseScopesInput(String(formData.get("scopes") ?? ""));
+const status = String(formData.get("status") ?? "active") === "disabled" ? "disabled" : "active";
+await upsertUser(env.USERS_KV, {
+email,
+tools,
+scopes,
+status,
+lastLoginAt: user.lastLoginAt,
+});
+feedback = "Változások mentve.";
+}
+
+user = await getUser(env.USERS_KV, email);
+if (!user) {
+errorMessage = "A felhasználó már nem létezik.";
+}
+}
+---
+
+<AdminLayout title={`Felhasználó: ${email}`} description="Felhasználó jogosultságainak szerkesztése">
+<h1>{email}</h1>
+<p><a href="/users">← Vissza a listához</a></p>
+
+{feedback && <p class="ok-message">{feedback}</p>}
+{errorMessage && <p class="error-message">{errorMessage}</p>}
+
+{user && (
+<>
+<form method="post" class="editor-form">
+<input type="hidden" name="action" value="save" />
+<label>
+Státusz
+<select name="status">
+<option value="active" selected={user.status === "active"}>Aktív</option>
+<option value="disabled" selected={user.status === "disabled"}>Letiltott</option>
+</select>
+</label>
+<label>
+Engedélyezett toolok (vesszővel)
+<input name="tools" type="text" value={user.tools.join(", ")} />
+</label>
+<label>
+Scope-ok (vesszővel)
+<input name="scopes" type="text" value={user.scopes.join(", ")} />
+</label>
+<p>Utolsó bejelentkezés: {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString("hu-HU") : "-"}</p>
+<button type="submit">Mentés</button>
+</form>
+
+<div class="actions">
+<form method="post">
+<input type="hidden" name="action" value={user.status === "active" ? "disable" : "enable"} />
+<button type="submit">{user.status === "active" ? "Hozzáférés megvonása" : "Újra engedélyezés"}</button>
+</form>
+<form method="post" onsubmit="return confirm('Biztosan törlöd ezt a felhasználót?');">
+<input type="hidden" name="action" value="delete" />
+<button type="submit" class="danger">Felhasználó törlése</button>
+</form>
+</div>
+</>
+)}
+</AdminLayout>
+
+<style>
+.editor-form {
+display: grid;
+gap: 0.75rem;
+padding: 1rem;
+border: 1px solid rgb(var(--gray-light));
+border-radius: 0.5rem;
+margin-bottom: 1rem;
+}
+
+label {
+display: grid;
+gap: 0.35rem;
+}
+
+input,
+select,
+button {
+font: inherit;
+padding: 0.5rem;
+}
+
+.actions {
+display: flex;
+gap: 0.75rem;
+flex-wrap: wrap;
+}
+
+.danger {
+background: #8f1326;
+border: 1px solid #8f1326;
+color: #fff;
+}
+
+.ok-message {
+color: #146c2e;
+}
+
+.error-message {
+color: #b40022;
+}
+</style>
