@@ -55,6 +55,18 @@ All commands are run from the root of the project, from a terminal:
 | `npm run build && npm run deploy` | Deploy your production site to Cloudflare        |
 | `npm wrangler tail`               | View real-time logs for all Workers              |
 
+## 🔐 Admin authentication secrets
+
+The admin routes are protected with token-based authentication in SSR mode. Configure these as Worker secrets (or dashboard secrets), never in source code:
+
+- `ADMIN_TOKEN` – login token checked on `/login`
+- `SESSION_SECRET` – HMAC signing secret for the `HttpOnly` session cookie
+
+```bash
+npx wrangler secret put ADMIN_TOKEN
+npx wrangler secret put SESSION_SECRET
+```
+
 ## 👀 Want to learn more?
 
 Check out [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
