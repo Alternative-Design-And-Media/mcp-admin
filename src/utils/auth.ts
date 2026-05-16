@@ -8,6 +8,10 @@ export const SESSION_COOKIE_OPTIONS = {
 	path: "/",
 };
 
+function isNonEmpty(value: string): boolean {
+	return value.trim().length > 0;
+}
+
 function bytesToBase64Url(bytes: Uint8Array): string {
 	let binary = "";
 	for (const byte of bytes) {
@@ -48,6 +52,10 @@ async function sign(payload: string, secret: string): Promise<string> {
 }
 
 export async function createSessionCookieValue(token: string, secret: string): Promise<string> {
+	if (!isNonEmpty(secret)) {
+		throw new Error("SESSION_SECRET must be a non-empty string.");
+	}
+
 	const payload = toBase64Url(token);
 	const signature = await sign(payload, secret);
 
@@ -59,6 +67,10 @@ export async function verifySessionCookie(
 	token: string,
 	secret: string,
 ): Promise<boolean> {
+	if (!isNonEmpty(token) || !isNonEmpty(secret)) {
+		return false;
+	}
+
 	const [payload, signature] = sessionCookieValue.split(".");
 	if (!payload || !signature) {
 		return false;
