@@ -1,0 +1,80 @@
+---
+import {
+	createSessionCookieValue,
+	SESSION_COOKIE_NAME,
+	SESSION_COOKIE_OPTIONS,
+	verifySessionCookie,
+} from "../utils/auth";
+
+const { ADMIN_TOKEN, SESSION_SECRET } = Astro.locals.runtime.env;
+const existingSession = Astro.cookies.get(SESSION_COOKIE_NAME)?.value;
+
+if (existingSession && (await verifySessionCookie(existingSession, ADMIN_TOKEN, SESSION_SECRET))) {
+	return Astro.redirect("/");
+}
+
+let errorMessage = "";
+
+if (Astro.request.method === "POST") {
+	const formData = await Astro.request.formData();
+	const token = formData.get("token");
+
+	if (typeof token === "string" && token === ADMIN_TOKEN) {
+		const sessionValue = await createSessionCookieValue(token, SESSION_SECRET);
+		Astro.cookies.set(SESSION_COOKIE_NAME, sessionValue, SESSION_COOKIE_OPTIONS);
+		return Astro.redirect("/");
+	}
+
+	errorMessage = "Érvénytelen token.";
+}
+---
+
+<!doctype html>
+<html lang="hu">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>Bejelentkezés</title>
+		<style>
+			body {
+				font-family: system-ui, sans-serif;
+				margin: 0;
+				min-height: 100vh;
+				display: grid;
+				place-items: center;
+				background: #f7f7f9;
+			}
+			form {
+				background: #fff;
+				padding: 1.25rem;
+				border-radius: 0.5rem;
+				box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+				min-width: 20rem;
+			}
+			label,
+			input,
+			button {
+				display: block;
+				width: 100%;
+			}
+			input,
+			button {
+				padding: 0.65rem;
+				margin-top: 0.5rem;
+				box-sizing: border-box;
+			}
+			.error {
+				color: #c00000;
+				margin-top: 0.75rem;
+			}
+		</style>
+	</head>
+	<body>
+		<form method="post">
+			<label for="token">Admin token</label>
+			<input id="token" name="token" type="password" required autocomplete="current-password" />
+			<button type="submit">Belépés</button>
+			{errorMessage && <p class="error">{errorMessage}</p>}
+		</form>
+	</body>
+</html>
