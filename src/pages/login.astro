@@ -7,15 +7,23 @@ import {
 } from "../utils/auth";
 
 const { ADMIN_TOKEN, SESSION_SECRET } = Astro.locals.runtime.env;
+const isAuthConfigured = ADMIN_TOKEN.trim().length > 0 && SESSION_SECRET.trim().length > 0;
 const existingSession = Astro.cookies.get(SESSION_COOKIE_NAME)?.value;
 
-if (existingSession && (await verifySessionCookie(existingSession, ADMIN_TOKEN, SESSION_SECRET))) {
+if (
+	isAuthConfigured &&
+	existingSession &&
+	(await verifySessionCookie(existingSession, ADMIN_TOKEN, SESSION_SECRET))
+) {
 	return Astro.redirect("/");
 }
 
 let errorMessage = "";
 
 if (Astro.request.method === "POST") {
+	if (!isAuthConfigured) {
+		errorMessage = "A bejelentkezés jelenleg nem érhető el.";
+	} else {
 	const formData = await Astro.request.formData();
 	const token = formData.get("token");
 
@@ -26,6 +34,7 @@ if (Astro.request.method === "POST") {
 	}
 
 	errorMessage = "Érvénytelen token.";
+	}
 }
 ---
 
