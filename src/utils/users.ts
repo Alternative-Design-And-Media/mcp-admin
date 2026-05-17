@@ -147,6 +147,17 @@ export async function setUserActive(
     .run();
 }
 
+export async function updateDisplayName(
+  db: D1Database,
+  email: string,
+  displayName: string | null
+): Promise<void> {
+  await db
+    .prepare("UPDATE users SET display_name = ? WHERE email = ?")
+    .bind(displayName || null, email)
+    .run();
+}
+
 export async function upsertUser(
   db: D1Database,
   email: string,
