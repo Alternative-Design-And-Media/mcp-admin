@@ -8,6 +8,21 @@ export const SESSION_COOKIE_OPTIONS = {
 	path: "/",
 };
 
+// Fallback secret generated once per Worker instance lifetime.
+// Used only when SESSION_SECRET env var is not configured.
+// Sessions will be invalidated on Worker restart, which is acceptable
+// for a single-admin tool.
+let _runtimeSecret: string | null = null;
+
+function getRuntimeSecret(): string {
+	if (!_runtimeSecret) {
+		const bytes = new Uint8Array(32);
+		crypto.getRandomValues(bytes);
+		_runtimeSecret = bytesToBase64Url(bytes);
+	}
+	return _runtimeSecret;
+}
+
 function isNonEmpty(value: string | null | undefined): value is string {
 	return typeof value === "string" && value.trim().length > 0;
 }
@@ -51,13 +66,10 @@ async function sign(payload: string, secret: string): Promise<string> {
 	return bytesToBase64Url(new Uint8Array(signature));
 }
 
-export async function createSessionCookieValue(token: string, secret: string): Promise<string> {
-	if (!isNonEmpty(secret)) {
-		throw new Error("SESSION_SECRET must be a non-empty string.");
-	}
-
+export async function createSessionCookieValue(token: string, secret: string | null | undefined): Promise<string> {
+	const effectiveSecret = isNonEmpty(secret) ? secret : getRuntimeSecret();
 	const payload = toBase64Url(token);
-	const signature = await sign(payload, secret);
+	const signature = await sign(payload, effectiveSecret);
 
 	return `${payload}.${signature}`;
 }
@@ -67,9 +79,11 @@ export async function verifySessionCookie(
 	token: string | null | undefined,
 	secret: string | null | undefined,
 ): Promise<boolean> {
-	if (!isNonEmpty(token) || !isNonEmpty(secret)) {
+	if (!isNonEmpty(token)) {
 		return false;
 	}
+
+	const effectiveSecret = isNonEmpty(secret) ? secret : getRuntimeSecret();
 
 	const [payload, signature] = sessionCookieValue.split(".");
 	if (!payload || !signature) {
@@ -81,6 +95,6 @@ export async function verifySessionCookie(
 		return false;
 	}
 
-	const expectedSignature = await sign(payload, secret);
+	const expectedSignature = await sign(payload, effectiveSecret);
 	return timingSafeEqual(signature, expectedSignature);
 }
