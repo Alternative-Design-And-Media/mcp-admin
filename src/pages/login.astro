@@ -9,7 +9,7 @@ import {
 const { ADMIN_TOKEN, SESSION_SECRET } = Astro.locals.runtime.env;
 const adminToken = typeof ADMIN_TOKEN === "string" ? ADMIN_TOKEN : "";
 const sessionSecret = typeof SESSION_SECRET === "string" ? SESSION_SECRET : "";
-const isAuthConfigured = adminToken.trim().length > 0 && sessionSecret.trim().length > 0;
+const isAuthConfigured = adminToken.trim().length > 0;
 const existingSession = Astro.cookies.get(SESSION_COOKIE_NAME)?.value;
 
 if (
