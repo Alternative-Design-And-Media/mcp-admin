@@ -1,6 +1,13 @@
 ---
 import AdminLayout from "../../components/AdminLayout.astro";
-import { getUserWithPermissions, setUserActive, getUserIdFromEmail } from "../../utils/users";
+import {
+  getUserWithPermissions,
+  setUserActive,
+  getUserIdFromEmail,
+  grantToolPermission,
+  revokeToolPermission,
+} from "../../utils/users";
+import { fetchToolsFromMcp } from "../../utils/tools";
 
 const db: D1Database = Astro.locals.runtime.env.DATABASE;
 const email = decodeURIComponent(Astro.params.email ?? "");
@@ -9,110 +16,228 @@ if (!email) return Astro.redirect("/users");
 
 const userId = getUserIdFromEmail(email);
 let feedback = "";
+let feedbackType: "success" | "error" = "success";
 
 if (Astro.request.method === "POST") {
   const form = await Astro.request.formData();
-  const action = form.get("action");
+  const action = form.get("action") as string | null;
+
   if (action === "activate") {
     await setUserActive(db, email, true);
     feedback = "Felhasználó aktiválva.";
   } else if (action === "disable") {
     await setUserActive(db, email, false);
     feedback = "Felhasználó letiltva.";
+  } else if (action === "grant") {
+    const toolName = (form.get("tool_name") as string | null)?.trim();
+    if (toolName) {
+      await grantToolPermission(db, email, toolName);
+      feedback = `Jogosultság megadva: ${toolName}`;
+    } else {
+      feedback = "Nincs kiválasztott tool.";
+      feedbackType = "error";
+    }
+  } else if (action === "revoke") {
+    const toolName = (form.get("tool_name") as string | null)?.trim();
+    if (toolName) {
+      await revokeToolPermission(db, email, toolName);
+      feedback = `Jogosultság visszavonva: ${toolName}`;
+    } else {
+      feedback = "Nincs megadott tool.";
+      feedbackType = "error";
+    }
   }
 }
 
-const { user, permissions } = await getUserWithPermissions(db, email);
+const [{ user, permissions }, allTools] = await Promise.all([
+  getUserWithPermissions(db, email),
+  fetchToolsFromMcp(Astro.locals.runtime.env),
+]);
 
 if (!user) return Astro.redirect("/users");
+
+const grantedSet = new Set(permissions.map((p) => p.tool_name));
+const availableTools = allTools.filter((t) => !grantedSet.has(t.name));
 ---
 
 <AdminLayout title={`Felhasználó: ${userId}`} description="Felhasználó részletek">
-	<p><a href="/users">&larr; Vissza a listához</a></p>
-	<h1>{userId}</h1>
+  <p><a href="/users">&larr; Vissza a listához</a></p>
+  <h1>{userId}</h1>
 
-	{feedback && <p class="feedback">{feedback}</p>}
+  {feedback && <p class={`msg ${feedbackType}`}>{feedback}</p>}
 
-	<section>
-		<h2>Adatok</h2>
-		<dl>
-			<dt>Azonosító</dt><dd><code>{userId}</code></dd>
-			<dt>Email</dt><dd>{user.email}</dd>
-			<dt>Név</dt><dd>{user.display_name ?? "–"}</dd>
-			<dt>Létrehozva</dt><dd>{user.created_at}</dd>
-			<dt>Utolsó bejelentkezés</dt><dd>{user.last_login ?? "–"}</dd>
-			<dt>Státusz</dt>
-			<dd>
-				<span class={`badge ${user.is_active ? "active" : "disabled"}`}>
-					{user.is_active ? "Aktív" : "Letiltott"}
-				</span>
-			</dd>
-		</dl>
+  <section>
+    <h2>Adatok</h2>
+    <dl>
+      <dt>Azonosító</dt><dd><code>{userId}</code></dd>
+      <dt>Email</dt><dd>{user.email}</dd>
+      <dt>Név</dt><dd>{user.display_name ?? "–"}</dd>
+      <dt>Létrehozva</dt><dd>{user.created_at}</dd>
+      <dt>Utolsó bejelentkezés</dt><dd>{user.last_login ?? "–"}</dd>
+      <dt>Státusz</dt>
+      <dd>
+        <span class={`badge ${user.is_active ? "active" : "disabled"}`}>
+          {user.is_active ? "Aktív" : "Letiltott"}
+        </span>
+      </dd>
+    </dl>
 
-		<form method="post" class="action-form">
-			{user.is_active ? (
-				<button type="submit" name="action" value="disable" class="btn-danger">Letiltás</button>
-			) : (
-				<button type="submit" name="action" value="activate" class="btn-primary">Aktiválás</button>
-			)}
-		</form>
-	</section>
+    <form method="post" class="action-form">
+      {user.is_active ? (
+        <button type="submit" name="action" value="disable" class="btn-danger">Letiltás</button>
+      ) : (
+        <button type="submit" name="action" value="activate" class="btn-primary">Aktiválás</button>
+      )}
+    </form>
+  </section>
 
-	<section>
-		<h2>Engedélyezett toolok</h2>
-		{permissions.length === 0 ? (
-			<p class="empty">Nincs engedélyezett tool.</p>
-		) : (
-			<ul class="tool-list">
-				{permissions.map((p) => (
-					<li><code>{p.tool_name}</code> <span class="granted">({p.granted_at})</span></li>
-				))}
-			</ul>
-		)}
-	</section>
+  <section>
+    <h2>Tool jogosultságok</h2>
+
+    {permissions.length === 0 ? (
+      <p class="empty">Nincs engedélyezett tool.</p>
+    ) : (
+      <table class="perm-table">
+        <thead>
+          <tr>
+            <th>Tool neve</th>
+            <th>Megadva</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {permissions.map((p) => (
+            <tr>
+              <td><code>{p.tool_name}</code></td>
+              <td class="muted">{p.granted_at}</td>
+              <td>
+                <form method="post" class="inline-form">
+                  <input type="hidden" name="tool_name" value={p.tool_name} />
+                  <button type="submit" name="action" value="revoke" class="btn-revoke">Visszavon</button>
+                </form>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+
+    {availableTools.length > 0 && (
+      <form method="post" class="grant-form">
+        <label for="tool_name">Tool hozzáadása</label>
+        <div class="grant-row">
+          <select id="tool_name" name="tool_name" required>
+            <option value="">– válassz toolt –</option>
+            {availableTools.map((t) => (
+              <option value={t.name}>{t.name}</option>
+            ))}
+          </select>
+          <button type="submit" name="action" value="grant" class="btn-primary">Megad</button>
+        </div>
+      </form>
+    )}
+  </section>
 </AdminLayout>
 
 <style>
-	h1 { margin: 0.5rem 0 1rem; }
+  h1 { margin: 0.5rem 0 1rem; }
 
-	section { margin-bottom: 2rem; }
-	h2 { margin-bottom: 0.75rem; font-size: 1rem; }
+  section { margin-bottom: 2rem; }
+  h2 { margin-bottom: 0.75rem; font-size: 1rem; border-bottom: 1px solid #eee; padding-bottom: 0.4rem; }
 
-	dl {
-		display: grid;
-		grid-template-columns: max-content 1fr;
-		gap: 0.4rem 1.5rem;
-		margin-bottom: 1rem;
-		font-size: 0.875rem;
-	}
-	dt { color: #666; }
+  dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.4rem 1.5rem;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+  }
+  dt { color: #666; }
 
-	code {
-		background: #f0f0f0;
-		padding: 0.1rem 0.4rem;
-		border-radius: 0.25rem;
-		font-size: 0.8rem;
-	}
+  code {
+    background: #f0f0f0;
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+    font-family: monospace;
+  }
 
-	.badge {
-		display: inline-block;
-		padding: 0.2rem 0.5rem;
-		border-radius: 9999px;
-		font-size: 0.75rem;
-		font-weight: 500;
-	}
-	.badge.active  { background: #e6f4ea; color: #1e7e34; }
-	.badge.disabled { background: #fce8e6; color: #b71c1c; }
+  .badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .badge.active  { background: #e6f4ea; color: #1e7e34; }
+  .badge.disabled { background: #fce8e6; color: #b71c1c; }
 
-	.action-form { margin-top: 0.5rem; }
+  .action-form { margin-top: 0.5rem; }
 
-	button { font: inherit; padding: 0.4rem 1rem; border-radius: 0.375rem; border: none; cursor: pointer; }
-	.btn-primary { background: #01696f; color: #fff; }
-	.btn-danger  { background: #b71c1c; color: #fff; }
+  button {
+    font: inherit;
+    padding: 0.35rem 0.9rem;
+    border-radius: 0.375rem;
+    border: none;
+    cursor: pointer;
+    font-size: 0.875rem;
+  }
+  .btn-primary  { background: #01696f; color: #fff; }
+  .btn-primary:hover { background: #0c4e54; }
+  .btn-danger   { background: #b71c1c; color: #fff; }
+  .btn-danger:hover { background: #8e1515; }
+  .btn-revoke   { background: #fce8e6; color: #b71c1c; border: 1px solid #f5c6c6; }
+  .btn-revoke:hover { background: #f5c6c6; }
 
-	.tool-list { list-style: none; padding: 0; display: grid; gap: 0.4rem; font-size: 0.875rem; }
-	.granted { color: #999; font-size: 0.75rem; }
+  .perm-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    margin-bottom: 1.25rem;
+  }
+  .perm-table th,
+  .perm-table td {
+    border: 1px solid #e0e0e0;
+    padding: 0.45rem 0.75rem;
+    text-align: left;
+  }
+  .perm-table th { background: #f5f5f5; font-weight: 600; }
+  .muted { color: #888; font-size: 0.8rem; }
 
-	.feedback { color: #1e7e34; margin-bottom: 1rem; font-size: 0.875rem; }
-	.empty { color: #999; font-style: italic; font-size: 0.875rem; }
+  .inline-form { margin: 0; }
+
+  .grant-form {
+    display: grid;
+    gap: 0.4rem;
+    max-width: 32rem;
+  }
+  .grant-form label { font-size: 0.875rem; font-weight: 500; color: #444; }
+  .grant-row {
+    display: flex;
+    gap: 0.5rem;
+  }
+  select {
+    font: inherit;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 0.375rem;
+    flex: 1;
+    font-size: 0.875rem;
+  }
+  select:focus {
+    outline: 2px solid #01696f;
+    outline-offset: 2px;
+    border-color: #01696f;
+  }
+
+  .msg {
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+  }
+  .msg.success { background: #e6f4ea; color: #1e7e34; }
+  .msg.error   { background: #fce8e6; color: #b71c1c; }
+
+  .empty { color: #999; font-style: italic; font-size: 0.875rem; margin-bottom: 1rem; }
 </style>

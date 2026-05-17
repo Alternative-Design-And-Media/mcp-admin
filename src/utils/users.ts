@@ -11,6 +11,12 @@ export interface UserToolPermission {
   granted_at: string;
 }
 
+export interface UserWithEmail {
+  email: string;
+  display_name: string | null;
+  granted_at: string;
+}
+
 /**
  * Derives a stable user identifier from an email address.
  * szanto.benedek@adamgroup.hu -> szanto.benedek
@@ -18,7 +24,6 @@ export interface UserToolPermission {
 export function getUserIdFromEmail(email: string): string {
   const normalized = email.trim().toLowerCase();
   const localPart = normalized.split("@")[0] ?? normalized;
-
   return localPart
     .normalize("NFKD")
     .replace(/[^\w.-]+/g, "")
@@ -43,9 +48,11 @@ export function buildUserLogFileName(
 }
 
 export async function listAllUsers(db: D1Database): Promise<User[]> {
-  const result = await db.prepare(
-    "SELECT email, display_name, is_active, created_at, last_login FROM users ORDER BY email ASC"
-  ).all<User>();
+  const result = await db
+    .prepare(
+      "SELECT email, display_name, is_active, created_at, last_login FROM users ORDER BY email ASC"
+    )
+    .all<User>();
   return result.results;
 }
 
@@ -55,11 +62,59 @@ export async function getUserWithPermissions(
 ): Promise<{ user: User | null; permissions: UserToolPermission[] }> {
   const [userResult, permResult] = await Promise.all([
     db.prepare("SELECT * FROM users WHERE email = ?").bind(email).first<User>(),
-    db.prepare(
-      "SELECT tool_name, granted_at FROM user_tool_permissions WHERE email = ? ORDER BY tool_name ASC"
-    ).bind(email).all<UserToolPermission>(),
+    db
+      .prepare(
+        "SELECT tool_name, granted_at FROM user_tool_permissions WHERE email = ? ORDER BY tool_name ASC"
+      )
+      .bind(email)
+      .all<UserToolPermission>(),
   ]);
   return { user: userResult ?? null, permissions: permResult.results };
+}
+
+export async function grantToolPermission(
+  db: D1Database,
+  email: string,
+  toolName: string
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO user_tool_permissions (email, tool_name)
+       VALUES (?, ?)
+       ON CONFLICT(email, tool_name) DO NOTHING`
+    )
+    .bind(email, toolName)
+    .run();
+}
+
+export async function revokeToolPermission(
+  db: D1Database,
+  email: string,
+  toolName: string
+): Promise<void> {
+  await db
+    .prepare(
+      "DELETE FROM user_tool_permissions WHERE email = ? AND tool_name = ?"
+    )
+    .bind(email, toolName)
+    .run();
+}
+
+export async function listUsersWithToolPermission(
+  db: D1Database,
+  toolName: string
+): Promise<UserWithEmail[]> {
+  const result = await db
+    .prepare(
+      `SELECT u.email, u.display_name, p.granted_at
+       FROM user_tool_permissions p
+       JOIN users u ON u.email = p.email
+       WHERE p.tool_name = ?
+       ORDER BY u.email ASC`
+    )
+    .bind(toolName)
+    .all<UserWithEmail>();
+  return result.results;
 }
 
 export async function createUser(
@@ -75,7 +130,7 @@ export async function createUser(
     return { success: false, error: "Ez az email cím már létezik." };
   }
   await db
-    .prepare("INSERT INTO users (email, display_name) VALUES (?,?)")
+    .prepare("INSERT INTO users (email, display_name) VALUES (?, ?)")
     .bind(email, displayName || null)
     .run();
   return { success: true };
