@@ -7,13 +7,15 @@ import {
 } from "../utils/auth";
 
 const { ADMIN_TOKEN, SESSION_SECRET } = Astro.locals.runtime.env;
-const isAuthConfigured = ADMIN_TOKEN.trim().length > 0 && SESSION_SECRET.trim().length > 0;
+const adminToken = typeof ADMIN_TOKEN === "string" ? ADMIN_TOKEN : "";
+const sessionSecret = typeof SESSION_SECRET === "string" ? SESSION_SECRET : "";
+const isAuthConfigured = adminToken.trim().length > 0 && sessionSecret.trim().length > 0;
 const existingSession = Astro.cookies.get(SESSION_COOKIE_NAME)?.value;
 
 if (
 	isAuthConfigured &&
 	existingSession &&
-	(await verifySessionCookie(existingSession, ADMIN_TOKEN, SESSION_SECRET))
+	(await verifySessionCookie(existingSession, adminToken, sessionSecret))
 ) {
 	return Astro.redirect("/");
 }
@@ -27,8 +29,8 @@ if (Astro.request.method === "POST") {
 		const formData = await Astro.request.formData();
 		const token = formData.get("token");
 
-		if (typeof token === "string" && token === ADMIN_TOKEN) {
-			const sessionValue = await createSessionCookieValue(token, SESSION_SECRET);
+		if (typeof token === "string" && token === adminToken) {
+			const sessionValue = await createSessionCookieValue(token, sessionSecret);
 			Astro.cookies.set(SESSION_COOKIE_NAME, sessionValue, SESSION_COOKIE_OPTIONS);
 			return Astro.redirect("/");
 		}

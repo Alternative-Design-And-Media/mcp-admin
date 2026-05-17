@@ -8,8 +8,8 @@ export const SESSION_COOKIE_OPTIONS = {
 	path: "/",
 };
 
-function isNonEmpty(value: string): boolean {
-	return value.trim().length > 0;
+function isNonEmpty(value: string | null | undefined): value is string {
+	return typeof value === "string" && value.trim().length > 0;
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
@@ -64,8 +64,8 @@ export async function createSessionCookieValue(token: string, secret: string): P
 
 export async function verifySessionCookie(
 	sessionCookieValue: string,
-	token: string,
-	secret: string,
+	token: string | null | undefined,
+	secret: string | null | undefined,
 ): Promise<boolean> {
 	if (!isNonEmpty(token) || !isNonEmpty(secret)) {
 		return false;

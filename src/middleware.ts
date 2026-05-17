@@ -7,10 +7,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
 	}
 
 	const { ADMIN_TOKEN, SESSION_SECRET } = context.locals.runtime.env;
+	const adminToken = typeof ADMIN_TOKEN === "string" ? ADMIN_TOKEN : "";
+	const sessionSecret = typeof SESSION_SECRET === "string" ? SESSION_SECRET : "";
 	const sessionCookie = context.cookies.get(SESSION_COOKIE_NAME)?.value;
 	const isValidSession =
 		typeof sessionCookie === "string" &&
-		(await verifySessionCookie(sessionCookie, ADMIN_TOKEN, SESSION_SECRET));
+		(await verifySessionCookie(sessionCookie, adminToken, sessionSecret));
 
 	if (!isValidSession) {
 		context.cookies.delete(SESSION_COOKIE_NAME, { path: "/" });
