@@ -1,16 +1,9 @@
 ---
 import AdminLayout from "../../components/AdminLayout.astro";
-import { fetchToolsFromMcp } from "../../utils/tools";
-import {
-  listUsersWithToolPermission,
-  listAllUsers,
-  grantToolPermission,
-  revokeToolPermission,
-  getUserIdFromEmail,
-} from "../../utils/users";
+import { listAllTools } from "../../utils/tools";
+import { listAllUsers } from "../../utils/users";
 
-const env = Astro.locals.runtime.env;
-const db: D1Database = env.DATABASE;
+const db: D1Database = Astro.locals.runtime.env.DATABASE;
 const encodedName = Astro.params.name ?? "";
 let toolName = "";
 
@@ -20,114 +13,84 @@ try {
   return Astro.redirect("/tools");
 }
 
-let feedback = "";
-let feedbackType: "success" | "error" = "success";
-
-if (Astro.request.method === "POST") {
-  const form = await Astro.request.formData();
-  const action = form.get("action") as string | null;
-  const userEmail = (form.get("email") as string | null)?.trim();
-
-  if (action === "grant" && userEmail) {
-    await grantToolPermission(db, userEmail, toolName);
-    feedback = `Jogosultság megadva: ${getUserIdFromEmail(userEmail)}`;
-  } else if (action === "revoke" && userEmail) {
-    await revokeToolPermission(db, userEmail, toolName);
-    feedback = `Jogosultság visszavonva: ${getUserIdFromEmail(userEmail)}`;
-  } else {
-    feedback = "Nincs kiválasztott felhasználó.";
-    feedbackType = "error";
-  }
-}
-
-const [tools, grantedUsers, allUsers] = await Promise.all([
-  fetchToolsFromMcp(env),
-  listUsersWithToolPermission(db, toolName),
+const [allTools, allUsers] = await Promise.all([
+  listAllTools(db),
   listAllUsers(db),
 ]);
 
-const tool = tools.find((t) => t.name === toolName);
+const tool = allTools.find((t) => t.name === toolName);
 if (!tool) return Astro.redirect("/tools");
 
-const grantedEmails = new Set(grantedUsers.map((u) => u.email));
-const availableUsers = allUsers.filter((u) => u.is_active && !grantedEmails.has(u.email));
+// Users who have the scope this tool requires
+const usersWithScope = await db
+  .prepare(
+    `SELECT u.email, u.display_name, u.is_active, usp.granted_at
+     FROM user_scope_permissions usp
+     JOIN users u ON u.id = usp.user_id
+     WHERE usp.scope_id = ?
+     ORDER BY u.email ASC`
+  )
+  .bind(tool.scope_id)
+  .all<{ email: string; display_name: string | null; is_active: number; granted_at: string }>();
+
+const grantedEmails = new Set(usersWithScope.results.map((u) => u.email));
+const usersWithout = allUsers.filter((u) => u.is_active && !grantedEmails.has(u.email));
 ---
 
-<AdminLayout title={`Tool: ${toolName}`} description="Tool részletek és jogosultságok">
+<AdminLayout title={`Tool: ${toolName}`}>
   <p><a href="/tools">&larr; Vissza a tool listához</a></p>
   <h1>{toolName}</h1>
 
-  {feedback && <p class={`msg ${feedbackType}`}>{feedback}</p>}
-
-  <section>
-    <h2>Leírás</h2>
-    <p class="description">{tool.description || "Nincs leírás."}</p>
+  <section class="card">
+    <h2>Scope</h2>
+    <p>
+      Ez a tool a <code>{tool.scope_name}</code> scope-ot igényli.
+      A jogosultságok scope szinten kezelhetők a
+      <a href={`/users`}>felhasználók oldalán</a>.
+    </p>
   </section>
 
-  <section>
-    <h2>Input séma</h2>
-    <pre><code>{JSON.stringify(tool.inputSchema, null, 2)}</code></pre>
-  </section>
+  <section class="card">
+    <h2>Felhasználók ezzel a scope-pal ({usersWithScope.results.length})</h2>
 
-  <section>
-    <h2>Engedélyezett felhasználók</h2>
-
-    {grantedUsers.length === 0 ? (
-      <p class="empty">Még egyetlen felhasználónak sincs jogosultsága ehhez a toolhoz.</p>
+    {usersWithScope.results.length === 0 ? (
+      <p class="empty">Még egyetlen felhasználónak sincs meg ez a scope.</p>
     ) : (
       <table class="perm-table">
         <thead>
           <tr>
-            <th>Azonosító</th>
             <th>Email</th>
+            <th>Megjelenített név</th>
+            <th>Státusz</th>
             <th>Megadva</th>
-            <th></th>
           </tr>
         </thead>
         <tbody>
-          {grantedUsers.map((u) => (
+          {usersWithScope.results.map((u) => (
             <tr>
-              <td><code>{getUserIdFromEmail(u.email)}</code></td>
-              <td>{u.email}</td>
-              <td class="muted">{u.granted_at}</td>
-              <td>
-                <form method="post" class="inline-form">
-                  <input type="hidden" name="email" value={u.email} />
-                  <button type="submit" name="action" value="revoke" class="btn-revoke">Visszavon</button>
-                </form>
+              <td><a href={`/users/${encodeURIComponent(u.email)}`}>{u.email}</a></td>
+              <td>{u.display_name ?? "–"}</td>
+              <td class={u.is_active ? "active" : "inactive"}>
+                {u.is_active ? "Aktív" : "Letiltva"}
               </td>
+              <td class="muted">{u.granted_at}</td>
             </tr>
           ))}
         </tbody>
       </table>
     )}
 
-    {availableUsers.length > 0 && (
-      <form method="post" class="grant-form">
-        <label for="email">Felhasználó hozzáadása</label>
-        <div class="grant-row">
-          <select id="email" name="email" required>
-            <option value="">– válassz felhasználót –</option>
-            {availableUsers.map((u) => (
-              <option value={u.email}>
-                {getUserIdFromEmail(u.email)}{u.display_name ? ` — ${u.display_name}` : ""}
-              </option>
-            ))}
-          </select>
-          <button type="submit" name="action" value="grant" class="btn-primary">Megad</button>
-        </div>
-      </form>
-    )}
-
-    {availableUsers.length === 0 && grantedUsers.length > 0 && (
-      <p class="all-granted">Minden aktív felhasználónak van már jogosultsága.</p>
+    {usersWithout.length > 0 && (
+      <p class="hint">
+        {usersWithout.length} aktív felhasználónak nincs meg a <code>{tool.scope_name}</code> scope.
+        <a href="/users">Jogosultság kezelése →</a>
+      </p>
     )}
   </section>
 </AdminLayout>
 
 <style>
-  h1 { margin: 0.5rem 0 1rem; }
-
+  h1 { margin: 0.5rem 0 1.25rem; }
   section { margin-bottom: 2rem; }
   h2 {
     margin-bottom: 0.75rem;
@@ -135,42 +98,17 @@ const availableUsers = allUsers.filter((u) => u.is_active && !grantedEmails.has(
     border-bottom: 1px solid #eee;
     padding-bottom: 0.4rem;
   }
-
-  .description {
-    font-size: 0.9rem;
-    color: #444;
-    max-width: 60ch;
-  }
-
-  pre {
-    overflow: auto;
-    max-height: 24rem;
-    background: #f5f5f5;
-    padding: 1rem;
-    border-radius: 0.5rem;
-    font-size: 0.85rem;
-  }
-
   code {
     background: #f0f0f0;
     padding: 0.1rem 0.4rem;
     border-radius: 0.25rem;
-    font-size: 0.8rem;
+    font-size: 0.85em;
     font-family: monospace;
   }
-
-  pre code {
-    background: none;
-    padding: 0;
-    border-radius: 0;
-    font-size: inherit;
-  }
-
   .perm-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.875rem;
-    margin-bottom: 1.25rem;
   }
   .perm-table th,
   .perm-table td {
@@ -179,61 +117,9 @@ const availableUsers = allUsers.filter((u) => u.is_active && !grantedEmails.has(
     text-align: left;
   }
   .perm-table th { background: #f5f5f5; font-weight: 600; }
-  .muted { color: #888; font-size: 0.8rem; }
-
-  .inline-form { margin: 0; }
-
-  .grant-form {
-    display: grid;
-    gap: 0.4rem;
-    max-width: 36rem;
-  }
-  .grant-form label { font-size: 0.875rem; font-weight: 500; color: #444; }
-  .grant-row {
-    display: flex;
-    gap: 0.5rem;
-  }
-  select {
-    font: inherit;
-    padding: 0.35rem 0.6rem;
-    border: 1px solid #ccc;
-    border-radius: 0.375rem;
-    flex: 1;
-    font-size: 0.875rem;
-  }
-  select:focus {
-    outline: 2px solid #01696f;
-    outline-offset: 2px;
-    border-color: #01696f;
-  }
-
-  button {
-    font: inherit;
-    padding: 0.35rem 0.9rem;
-    border-radius: 0.375rem;
-    border: none;
-    cursor: pointer;
-    font-size: 0.875rem;
-  }
-  .btn-primary { background: #01696f; color: #fff; }
-  .btn-primary:hover { background: #0c4e54; }
-  .btn-revoke  { background: #fce8e6; color: #b71c1c; border: 1px solid #f5c6c6; }
-  .btn-revoke:hover { background: #f5c6c6; }
-
-  .msg {
-    padding: 0.5rem 0.75rem;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    margin-bottom: 1rem;
-  }
-  .msg.success { background: #e6f4ea; color: #1e7e34; }
-  .msg.error   { background: #fce8e6; color: #b71c1c; }
-
-  .empty,
-  .all-granted {
-    color: #999;
-    font-style: italic;
-    font-size: 0.875rem;
-    margin-bottom: 1rem;
-  }
+  .muted  { color: #888; font-size: 0.8rem; }
+  .active   { color: #1e7e34; }
+  .inactive { color: #b71c1c; }
+  .empty { color: #999; font-style: italic; font-size: 0.875rem; }
+  .hint  { font-size: 0.8rem; color: #666; margin-top: 0.75rem; }
 </style>
