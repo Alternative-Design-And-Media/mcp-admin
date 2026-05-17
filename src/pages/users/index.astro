@@ -1,165 +1,120 @@
 ---
 import AdminLayout from "../../components/AdminLayout.astro";
-import { isValidEmail, listUsers, parseScopesInput, parseToolsInput, upsertUser } from "../../utils/users";
-
-const env = Astro.locals.runtime.env;
-const query = Astro.url.searchParams;
-const emailFilter = query.get("q")?.trim() ?? "";
-const cursor = query.get("cursor") ?? undefined;
-const pageSize = 20;
-
-let feedback = "";
-let errorMessage = "";
-
-if (Astro.request.method === "POST") {
-const formData = await Astro.request.formData();
-const email = String(formData.get("email") ?? "").trim();
-const tools = parseToolsInput(String(formData.get("tools") ?? ""));
-const scopes = parseScopesInput(String(formData.get("scopes") ?? ""));
-
-if (!isValidEmail(email)) {
-errorMessage = "Érvénytelen email cím.";
-} else {
-await upsertUser(env.USERS_KV, {
-email,
-tools,
-scopes,
-status: "active",
-lastLoginAt: null,
-});
-feedback = `Felhasználó mentve: ${email.toLowerCase()}`;
-}
-}
-
-const usersPage = await listUsers(env.USERS_KV, {
-cursor,
-limit: pageSize,
-emailFilter,
-});
-
-const nextUrl = new URL(Astro.url.pathname, Astro.url);
-if (emailFilter) {
-nextUrl.searchParams.set("q", emailFilter);
-}
-if (usersPage.cursor) {
-nextUrl.searchParams.set("cursor", usersPage.cursor);
-}
 ---
 
 <AdminLayout title="Felhasználók" description="Felhasználók és jogosultságok kezelése">
-<h1>Felhasználók</h1>
+	<div class="mock-banner">
+		<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+			<circle cx="12" cy="12" r="10"/>
+			<line x1="12" y1="8" x2="12" y2="12"/>
+			<line x1="12" y1="16" x2="12.01" y2="16"/>
+		</svg>
+		<span>Ez az oldal fejlesztés alatt áll. Az olvasás és szerkesztés funkciók hamarosan elérhetők lesznek.</span>
+	</div>
 
-<form method="get" class="filter-form">
-<label for="q">Email szűrő</label>
-<input id="q" name="q" type="search" value={emailFilter} placeholder="pelda@ceg.hu" />
-<button type="submit">Szűrés</button>
-</form>
+	<h1>Felhasználók és jogosultságok</h1>
 
-{feedback && <p class="ok-message">{feedback}</p>}
-{errorMessage && <p class="error-message">{errorMessage}</p>}
-
-<section>
-<h2>Új felhasználó</h2>
-<form method="post" class="new-user-form">
-<label>
-Email
-<input name="email" type="email" required />
-</label>
-<label>
-Kezdeti toolok (vesszővel)
-<input name="tools" type="text" placeholder="tools/list,logs/read" />
-</label>
-<label>
-Scope-ok (vesszővel)
-<input name="scopes" type="text" placeholder="admin,read" />
-</label>
-<button type="submit">Felhasználó létrehozása</button>
-</form>
-</section>
-
-<section>
-<h2>Felhasználó lista</h2>
-<table>
-<thead>
-<tr>
-<th>Email</th>
-<th>Engedélyezett toolok</th>
-<th>Scope-ok</th>
-<th>Utolsó bejelentkezés</th>
-<th>Státusz</th>
-</tr>
-</thead>
-<tbody>
-{usersPage.users.length === 0 ? (
-<tr>
-<td colspan="5">Nincs találat.</td>
-</tr>
-) : (
-usersPage.users.map((user) => (
-<tr>
-<td><a href={`/users/${encodeURIComponent(user.email)}`}>{user.email}</a></td>
-<td>{user.tools.join(", ") || "-"}</td>
-<td>{user.scopes.join(", ") || "-"}</td>
-<td>{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString("hu-HU") : "-"}</td>
-<td>{user.status === "active" ? "Aktív" : "Letiltott"}</td>
-</tr>
-))
-)}
-</tbody>
-</table>
-{usersPage.cursor && (
-<p class="pagination">
-<a href={nextUrl.toString()}>Következő oldal</a>
-</p>
-)}
-</section>
+	<div class="mock-table">
+		<table>
+			<thead>
+				<tr>
+					<th>Email</th>
+					<th>Engedélyezett toolok</th>
+					<th>Scope-ok</th>
+					<th>Utolsó bejelentkezés</th>
+					<th>Státusz</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr class="mock-row">
+					<td>pelda@adamgroup.hu</td>
+					<td>tools/list, logs/read</td>
+					<td>admin</td>
+					<td>2026-05-17 14:00</td>
+					<td><span class="badge active">Aktív</span></td>
+				</tr>
+				<tr class="mock-row">
+					<td>masik@adamgroup.hu</td>
+					<td>tools/list</td>
+					<td>read</td>
+					<td>–</td>
+					<td><span class="badge disabled">Letiltott</span></td>
+				</tr>
+			</tbody>
+		</table>
+		<p class="mock-note">A fenti adatok illusztrációs célúak. Az éles adatok betöltése még nem érhető el.</p>
+	</div>
 </AdminLayout>
 
 <style>
-.filter-form,
-.new-user-form {
-display: grid;
-gap: 0.75rem;
-margin-bottom: 1.25rem;
-}
+	.mock-banner {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		background: #fff8e1;
+		border: 1px solid #f9a825;
+		border-radius: 0.5rem;
+		padding: 0.75rem 1rem;
+		margin-bottom: 1.5rem;
+		color: #7a5c00;
+		font-size: 0.9rem;
+	}
 
-.new-user-form {
-border: 1px solid rgb(var(--gray-light));
-padding: 1rem;
-border-radius: 0.5rem;
-}
+	.mock-banner svg {
+		flex-shrink: 0;
+		color: #f9a825;
+	}
 
-label {
-display: grid;
-gap: 0.35rem;
-}
+	h1 {
+		margin-bottom: 1rem;
+	}
 
-input,
-button {
-font: inherit;
-padding: 0.5rem;
-}
+	.mock-table {
+		overflow-x: auto;
+	}
 
-table {
-border-collapse: collapse;
-}
+	table {
+		border-collapse: collapse;
+		width: 100%;
+		opacity: 0.5;
+		pointer-events: none;
+		user-select: none;
+	}
 
-th,
-td {
-border: 1px solid rgb(var(--gray-light));
-padding: 0.5rem;
-vertical-align: top;
-}
+	th, td {
+		border: 1px solid #ddd;
+		padding: 0.5rem 0.75rem;
+		text-align: left;
+		font-size: 0.875rem;
+	}
 
-.ok-message {
-color: #146c2e;
-}
+	th {
+		background: #f5f5f5;
+		font-weight: 600;
+	}
 
-.error-message {
-color: #b40022;
-}
+	.badge {
+		display: inline-block;
+		padding: 0.2rem 0.5rem;
+		border-radius: 9999px;
+		font-size: 0.75rem;
+		font-weight: 500;
+	}
 
-.pagination {
-margin-top: 1rem;
-}
+	.badge.active {
+		background: #e6f4ea;
+		color: #1e7e34;
+	}
+
+	.badge.disabled {
+		background: #fce8e6;
+		color: #b71c1c;
+	}
+
+	.mock-note {
+		margin-top: 0.75rem;
+		color: #999;
+		font-size: 0.8rem;
+		font-style: italic;
+	}
 </style>

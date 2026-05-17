@@ -1,200 +1,49 @@
 ---
 import AdminLayout from "../../components/AdminLayout.astro";
-import { fetchToolsFromMcp } from "../../utils/tools";
-import {
-deleteUser,
-getUser,
-isValidEmail,
-parseScopesInput,
-parseToolsInput,
-setUserStatus,
-upsertUser,
-} from "../../utils/users";
 
-const env = Astro.locals.runtime.env;
-const encodedEmail = Astro.params.email ?? "";
-let email = "";
-
-try {
-email = decodeURIComponent(encodedEmail);
-} catch {
-return Astro.redirect("/users");
-}
-
-if (!isValidEmail(email)) {
-return Astro.redirect("/users");
-}
-
-let user = await getUser(env.USERS_KV, email);
-if (!user) {
-return Astro.redirect("/users");
-}
-
-let feedback = "";
-let errorMessage = "";
-const availableTools = await fetchToolsFromMcp(env);
-
-function getToolOptions(enabledTools: string[]): string[] {
-	return [
-		...availableTools.map((tool) => tool.name),
-		...enabledTools.filter((tool) => !availableTools.some((item) => item.name === tool)),
-	];
-}
-
-let toolOptions = getToolOptions(user.tools);
-
-if (Astro.request.method === "POST") {
-const formData = await Astro.request.formData();
-const action = String(formData.get("action") ?? "save");
-
-if (action === "delete") {
-await deleteUser(env.USERS_KV, email);
-return Astro.redirect("/users?deleted=1");
-}
-
-if (action === "disable") {
-await setUserStatus(env.USERS_KV, email, "disabled");
-feedback = "Felhasználó letiltva.";
-}
-
-if (action === "enable") {
-await setUserStatus(env.USERS_KV, email, "active");
-feedback = "Felhasználó aktiválva.";
-}
-
-if (action === "save") {
-const tools = parseToolsInput(
-formData
-.getAll("tools")
-.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-.join(","),
-);
-const scopes = parseScopesInput(String(formData.get("scopes") ?? ""));
-const status = String(formData.get("status") ?? "active") === "disabled" ? "disabled" : "active";
-await upsertUser(env.USERS_KV, {
-email,
-tools,
-scopes,
-status,
-lastLoginAt: user.lastLoginAt,
-});
-feedback = "Változások mentve.";
-}
-
-user = await getUser(env.USERS_KV, email);
-if (!user) {
-errorMessage = "A felhasználó már nem létezik.";
-} else {
-toolOptions = getToolOptions(user.tools);
-}
-}
+const { email } = Astro.params;
 ---
 
-<AdminLayout title={`Felhasználó: ${email}`} description="Felhasználó jogosultságainak szerkesztése">
-<h1>{email}</h1>
-<p><a href="/users">← Vissza a listához</a></p>
+<AdminLayout title="Felhasználó részletek" description="Felhasználó részletes adatai">
+	<div class="mock-banner">
+		<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+			<circle cx="12" cy="12" r="10"/>
+			<line x1="12" y1="8" x2="12" y2="12"/>
+			<line x1="12" y1="16" x2="12.01" y2="16"/>
+		</svg>
+		<span>Ez az oldal fejlesztés alatt áll. Az olvasás és szerkesztés funkciók hamarosan elérhetők lesznek.</span>
+	</div>
 
-{feedback && <p class="ok-message">{feedback}</p>}
-{errorMessage && <p class="error-message">{errorMessage}</p>}
-
-{user && (
-<>
-<form method="post" class="editor-form">
-<input type="hidden" name="action" value="save" />
-<label>
-Státusz
-<select name="status">
-<option value="active" selected={user.status === "active"}>Aktív</option>
-<option value="disabled" selected={user.status === "disabled"}>Letiltott</option>
-</select>
-</label>
-<label>
-Engedélyezett toolok
-<ul class="tools-list">
-{toolOptions.map((tool) => (
-<li>
-<label class="checkbox-label">
-<input type="checkbox" name="tools" value={tool} checked={user.tools.includes(tool)} />
-{tool}
-</label>
-</li>
-))}
-</ul>
-</label>
-<label>
-Scope-ok (vesszővel)
-<input name="scopes" type="text" value={user.scopes.join(", ")} />
-</label>
-<p>Utolsó bejelentkezés: {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString("hu-HU") : "-"}</p>
-<button type="submit">Mentés</button>
-</form>
-
-<div class="actions">
-<form method="post">
-<input type="hidden" name="action" value={user.status === "active" ? "disable" : "enable"} />
-<button type="submit">{user.status === "active" ? "Hozzáférés megvonása" : "Újra engedélyezés"}</button>
-</form>
-<form method="post" onsubmit="return confirm('Biztosan törlöd ezt a felhasználót?');">
-<input type="hidden" name="action" value="delete" />
-<button type="submit" class="danger">Felhasználó törlése</button>
-</form>
-</div>
-</>
-)}
+	<p><a href="/users">&larr; Vissza a listához</a></p>
+	<h1>{email ?? "Felhasználó"}</h1>
+	<p class="mock-note">Az adatok betöltése még nem érhető el.</p>
 </AdminLayout>
 
 <style>
-.editor-form {
-display: grid;
-gap: 0.75rem;
-padding: 1rem;
-border: 1px solid rgb(var(--gray-light));
-border-radius: 0.5rem;
-margin-bottom: 1rem;
-}
+	.mock-banner {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		background: #fff8e1;
+		border: 1px solid #f9a825;
+		border-radius: 0.5rem;
+		padding: 0.75rem 1rem;
+		margin-bottom: 1.5rem;
+		color: #7a5c00;
+		font-size: 0.9rem;
+	}
 
-label {
-display: grid;
-gap: 0.35rem;
-}
+	.mock-banner svg {
+		flex-shrink: 0;
+		color: #f9a825;
+	}
 
-input,
-select,
-button {
-font: inherit;
-padding: 0.5rem;
-}
+	h1 {
+		margin: 0.75rem 0 0.5rem;
+	}
 
-.actions {
-display: flex;
-gap: 0.75rem;
-flex-wrap: wrap;
-}
-
-.tools-list {
-list-style: none;
-padding: 0;
-display: grid;
-gap: 0.5rem;
-}
-
-.checkbox-label {
-display: flex;
-align-items: center;
-gap: 0.5rem;
-}
-
-.danger {
-background: #8f1326;
-border: 1px solid #8f1326;
-color: #fff;
-}
-
-.ok-message {
-color: #146c2e;
-}
-
-.error-message {
-color: #b40022;
-}
+	.mock-note {
+		color: #999;
+		font-style: italic;
+	}
 </style>
