@@ -11,6 +11,37 @@ export interface UserToolPermission {
   granted_at: string;
 }
 
+/**
+ * Derives a stable user identifier from an email address.
+ * szanto.benedek@adamgroup.hu -> szanto.benedek
+ */
+export function getUserIdFromEmail(email: string): string {
+  const normalized = email.trim().toLowerCase();
+  const localPart = normalized.split("@")[0] ?? normalized;
+
+  return localPart
+    .normalize("NFKD")
+    .replace(/[^\w.-]+/g, "")
+    .replace(/_{2,}/g, "_")
+    .replace(/\.{2,}/g, ".")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[_\-.]+|[_\-.]+$/g, "");
+}
+
+/**
+ * Builds a log file name for R2 storage.
+ * e.g. szanto.benedek-audit-2026-05-17T15-28-00-000Z.json
+ */
+export function buildUserLogFileName(
+  email: string,
+  suffix = "audit",
+  timestamp = new Date().toISOString()
+): string {
+  const userId = getUserIdFromEmail(email);
+  const safeTimestamp = timestamp.replace(/[:.]/g, "-");
+  return `${userId}-${suffix}-${safeTimestamp}.json`;
+}
+
 export async function listAllUsers(db: D1Database): Promise<User[]> {
   const result = await db.prepare(
     "SELECT email, display_name, is_active, created_at, last_login FROM users ORDER BY email ASC"
@@ -24,7 +55,9 @@ export async function getUserWithPermissions(
 ): Promise<{ user: User | null; permissions: UserToolPermission[] }> {
   const [userResult, permResult] = await Promise.all([
     db.prepare("SELECT * FROM users WHERE email = ?").bind(email).first<User>(),
-    db.prepare("SELECT tool_name, granted_at FROM user_tool_permissions WHERE email = ? ORDER BY tool_name ASC").bind(email).all<UserToolPermission>(),
+    db.prepare(
+      "SELECT tool_name, granted_at FROM user_tool_permissions WHERE email = ? ORDER BY tool_name ASC"
+    ).bind(email).all<UserToolPermission>(),
   ]);
   return { user: userResult ?? null, permissions: permResult.results };
 }
@@ -34,26 +67,42 @@ export async function createUser(
   email: string,
   displayName: string | null
 ): Promise<{ success: boolean; error?: string }> {
-  const existing = await db.prepare("SELECT email FROM users WHERE email = ?").bind(email).first();
+  const existing = await db
+    .prepare("SELECT email FROM users WHERE email = ?")
+    .bind(email)
+    .first();
   if (existing) {
     return { success: false, error: "Ez az email cím már létezik." };
   }
-  await db.prepare(
-    "INSERT INTO users (email, display_name) VALUES (?, ?)"
-  ).bind(email, displayName || null).run();
+  await db
+    .prepare("INSERT INTO users (email, display_name) VALUES (?,?)")
+    .bind(email, displayName || null)
+    .run();
   return { success: true };
 }
 
-export async function setUserActive(db: D1Database, email: string, active: boolean): Promise<void> {
-  await db.prepare("UPDATE users SET is_active = ? WHERE email = ?")
+export async function setUserActive(
+  db: D1Database,
+  email: string,
+  active: boolean
+): Promise<void> {
+  await db
+    .prepare("UPDATE users SET is_active = ? WHERE email = ?")
     .bind(active ? 1 : 0, email)
     .run();
 }
 
-export async function upsertUser(db: D1Database, email: string, displayName?: string): Promise<void> {
-  await db.prepare(
-    `INSERT INTO users (email, display_name, last_login)
-     VALUES (?, ?, datetime('now'))
-     ON CONFLICT(email) DO UPDATE SET last_login = datetime('now')`
-  ).bind(email, displayName ?? null).run();
+export async function upsertUser(
+  db: D1Database,
+  email: string,
+  displayName?: string
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO users (email, display_name, last_login)
+       VALUES (?, ?, datetime('now'))
+       ON CONFLICT(email) DO UPDATE SET last_login = datetime('now')`
+    )
+    .bind(email, displayName ?? null)
+    .run();
 }
