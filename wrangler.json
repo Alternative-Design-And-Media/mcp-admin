@@ -18,6 +18,10 @@
 		{
 			"binding": "AUDIT_LOGS",
 			"bucket_name": "adam-mcp-audit-log"
+		},
+		{
+			"binding": "HANDOVERS",
+			"bucket_name": "adam-mcp-handovers"
 		}
 	],
 	"observability": {

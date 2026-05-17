@@ -1,0 +1,303 @@
+---
+import AdminLayout from "../../components/AdminLayout.astro";
+
+const r2: R2Bucket = Astro.locals.runtime.env.HANDOVERS;
+
+// ── Szűrők / lapozás ────────────────────────────────────────────────────────
+const q = Astro.url.searchParams;
+const prefix   = q.get("prefix")?.trim()  || undefined;
+const cursor   = q.get("cursor")?.trim()  || undefined;
+const pageSize = 50;
+
+// R2 list() – legfeljebb pageSize+1 elemet kérünk, hogy tudjuk van-e következő oldal
+const listed = await r2.list({
+  prefix,
+  cursor,
+  limit: pageSize + 1,
+  include: ["httpMetadata", "customMetadata"],
+});
+
+const hasMore   = listed.objects.length > pageSize;
+const objects   = listed.objects.slice(0, pageSize);
+const nextCursor = hasMore ? listed.truncated ? listed.cursor : objects[objects.length - 1]?.key : undefined;
+
+// ── Segédfüggvények ──────────────────────────────────────────────────────────
+const TZ = "Europe/Budapest";
+function formatTs(d: Date | string | null | undefined): string {
+  if (!d) return "–";
+  const date = d instanceof Date ? d : new Date(d);
+  return date.toLocaleString("hu-HU", {
+    timeZone: TZ,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function buildUrl(overrides: Record<string, string | undefined>) {
+  const p = new URLSearchParams();
+  const merged = { prefix, cursor, ...overrides };
+  for (const [k, v] of Object.entries(merged)) {
+    if (v !== undefined && v !== "") p.set(k, v);
+  }
+  const qs = p.toString();
+  return `/handovers${qs ? `?${qs}` : ""}`;
+}
+
+// ── Fájlnév megjelenítése: az utolsó / után lévő rész vastagon, az előtte lévő halványan
+function splitKey(key: string): { dir: string; name: string } {
+  const idx = key.lastIndexOf("/");
+  if (idx === -1) return { dir: "", name: key };
+  return { dir: key.slice(0, idx + 1), name: key.slice(idx + 1) };
+}
+---
+
+<AdminLayout title="Handoverek">
+  <div class="page-header">
+    <h1>Handoverek</h1>
+    <span class="total-badge">{objects.length}{hasMore ? `+` : ""} fájl</span>
+  </div>
+
+  <!-- Szűrő -->
+  <section class="card filter-card">
+    <form method="get" class="filter-form">
+      <div class="filter-row">
+        <label class="filter-field">
+          <span>Prefix / mappa</span>
+          <input
+            type="text"
+            name="prefix"
+            value={prefix ?? ""}
+            placeholder="pl. 2026-05/ vagy handover_"
+            autocomplete="off"
+          />
+        </label>
+      </div>
+      <div class="filter-actions">
+        <button type="submit" class="btn btn-primary">Szűrés</button>
+        <a href="/handovers" class="btn btn-ghost">Törlés</a>
+      </div>
+    </form>
+  </section>
+
+  <!-- Táblázat -->
+  <section class="card table-card">
+    <div class="table-wrap">
+      <table class="ho-table">
+        <thead>
+          <tr>
+            <th class="col-key">Kulcs (fájlnév)</th>
+            <th class="col-size">Méret</th>
+            <th class="col-ts">Módosítva (CET)</th>
+            <th class="col-ct">Content-Type</th>
+            <th class="col-meta">Metaadatok</th>
+            <th class="col-dl"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {objects.length === 0 ? (
+            <tr>
+              <td colspan="6" class="empty-row">Nincs fájl ebben a bucketben{prefix ? ` a(z) "${prefix}" prefix alatt` : ""}.</td>
+            </tr>
+          ) : (
+            objects.map((obj) => {
+              const { dir, name } = splitKey(obj.key);
+              const meta = obj.customMetadata ?? {};
+              const metaEntries = Object.entries(meta);
+              return (
+                <tr>
+                  <td class="col-key">
+                    {dir && <span class="key-dir">{dir}</span>}
+                    <span class="key-name">{name}</span>
+                  </td>
+                  <td class="col-size num">{formatBytes(obj.size)}</td>
+                  <td class="col-ts">
+                    <time datetime={obj.uploaded?.toISOString()}>
+                      {formatTs(obj.uploaded)}
+                    </time>
+                  </td>
+                  <td class="col-ct">
+                    <span class="ct-badge">{obj.httpMetadata?.contentType ?? "–"}</span>
+                  </td>
+                  <td class="col-meta">
+                    {metaEntries.length === 0
+                      ? <span class="muted">–</span>
+                      : (
+                        <dl class="meta-list">
+                          {metaEntries.map(([k, v]) => (
+                            <div class="meta-row">
+                              <dt>{k}</dt>
+                              <dd>{v}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )
+                    }
+                  </td>
+                  <td class="col-dl">
+                    <a
+                      href={`/handovers/download?key=${encodeURIComponent(obj.key)}`}
+                      class="btn-dl"
+                      title="Letöltés / megtekintés"
+                    >↓</a>
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Lapozás -->
+    <div class="pagination">
+      <a href="/handovers" class="btn btn-ghost btn-page" title="Első oldal">&laquo; Elejére</a>
+      {nextCursor && (
+        <a href={buildUrl({ cursor: nextCursor })} class="btn btn-ghost btn-page">Következő &rsaquo;</a>
+      )}
+      {!nextCursor && (
+        <span class="btn btn-ghost btn-page btn-disabled">Következő &rsaquo;</span>
+      )}
+    </div>
+  </section>
+</AdminLayout>
+
+<style>
+  .page-header {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+  .page-header h1 { margin: 0; font-size: 1.4rem; }
+  .total-badge {
+    margin-left: auto;
+    font-size: 0.78rem;
+    background: #f3f3f3;
+    color: #666;
+    border-radius: 9999px;
+    padding: 0.15rem 0.6rem;
+    border: 1px solid #e0e0e0;
+  }
+
+  /* ── Szűrő ── */
+  .filter-card { margin-bottom: 1.25rem; }
+  .filter-form { padding: 0.75rem 1rem; }
+  .filter-row { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: flex-end; }
+  .filter-field { display: flex; flex-direction: column; gap: 0.25rem; min-width: 260px; flex: 1; }
+  .filter-field span { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #888; }
+  .filter-field input {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #d8d8d8;
+    border-radius: 0.35rem;
+    font-size: 0.83rem;
+    background: #fff;
+    width: 100%;
+  }
+  .filter-field input:focus { outline: 2px solid #01696f; outline-offset: 1px; }
+  .filter-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+
+  .btn { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.4rem 0.85rem; border-radius: 0.35rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; text-decoration: none; border: 1px solid transparent; transition: background 0.15s, border-color 0.15s; }
+  .btn-primary { background: #01696f; color: #fff; border-color: #01696f; }
+  .btn-primary:hover { background: #0c4e54; }
+  .btn-ghost { background: #fff; color: #444; border-color: #d8d8d8; }
+  .btn-ghost:hover { background: #f5f5f5; }
+  .btn-disabled { opacity: 0.4; pointer-events: none; }
+
+  /* ── Tábla ── */
+  .card {
+    border: 1px solid #e0e0e0;
+    border-radius: 0.5rem;
+    background: #fff;
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+  }
+  .table-wrap { overflow-x: auto; }
+
+  .ho-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.83rem;
+  }
+  .ho-table thead tr {
+    background: #f5f5f5;
+    border-bottom: 1px solid #e8e8e8;
+  }
+  .ho-table thead th {
+    padding: 0.45rem 0.85rem;
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #888;
+    white-space: nowrap;
+  }
+  .ho-table tbody tr {
+    border-bottom: 1px solid #f3f3f3;
+    transition: background 0.1s;
+  }
+  .ho-table tbody tr:last-child { border-bottom: none; }
+  .ho-table tbody tr:hover { background: #fafafa; }
+  .ho-table td { padding: 0.45rem 0.85rem; vertical-align: middle; }
+
+  .col-key  { min-width: 240px; }
+  .col-size { width: 80px; }
+  .col-ts   { width: 150px; white-space: nowrap; }
+  .col-ct   { width: 160px; }
+  .col-meta { min-width: 180px; }
+  .col-dl   { width: 42px; text-align: center; }
+
+  .key-dir  { color: #aaa; font-size: 0.78rem; }
+  .key-name { font-weight: 600; color: #222; word-break: break-all; }
+  .num { font-variant-numeric: tabular-nums; color: #666; }
+
+  .ct-badge {
+    font-size: 0.72rem;
+    background: #f0f4f4;
+    color: #01696f;
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.25rem;
+    font-family: monospace;
+  }
+
+  .meta-list { margin: 0; padding: 0; }
+  .meta-row { display: flex; gap: 0.35rem; font-size: 0.75rem; }
+  .meta-row dt { color: #888; font-weight: 600; white-space: nowrap; }
+  .meta-row dd { color: #444; margin: 0; word-break: break-all; }
+
+  .muted { color: #ccc; }
+  .empty-row { text-align: center; padding: 2rem; color: #bbb; font-size: 0.83rem; }
+
+  .btn-dl {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 0.3rem;
+    background: #f0f4f4;
+    color: #01696f;
+    font-size: 1rem;
+    text-decoration: none;
+    border: 1px solid #d4e4e2;
+    transition: background 0.15s;
+  }
+  .btn-dl:hover { background: #cedcd8; }
+
+  /* ── Lapozás ── */
+  .pagination {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 0.85rem;
+    border-top: 1px solid #f0f0f0;
+    background: #fafafa;
+  }
+  .btn-page { font-size: 0.78rem; padding: 0.3rem 0.65rem; }
+</style>
