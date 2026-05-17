@@ -16,7 +16,7 @@
 	"r2_buckets": [
 		{
 			"binding": "AUDIT_LOGS",
-			"bucket_name": "REPLACE_WITH_AUDIT_LOGS_BUCKET_NAME"
+			"bucket_name": "adam-mcp-audit-log"
 		}
 	],
 	"observability": {
