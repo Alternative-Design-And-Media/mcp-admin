@@ -1,96 +1,82 @@
 ---
 import AdminLayout from "../../components/AdminLayout.astro";
+import { listAllUsers } from "../../utils/users";
+
+const db: D1Database = Astro.locals.runtime.env.DATABASE;
+const users = await listAllUsers(db);
 ---
 
 <AdminLayout title="Felhasználók" description="Felhasználók és jogosultságok kezelése">
-	<div class="mock-banner">
-		<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-			<circle cx="12" cy="12" r="10"/>
-			<line x1="12" y1="8" x2="12" y2="12"/>
-			<line x1="12" y1="16" x2="12.01" y2="16"/>
-		</svg>
-		<span>Ez az oldal fejlesztés alatt áll. Az olvasás és szerkesztés funkciók hamarosan elérhetők lesznek.</span>
+	<div class="page-header">
+		<h1>Felhasználók</h1>
 	</div>
 
-	<h1>Felhasználók és jogosultságok</h1>
-
-	<div class="mock-table">
+	<div class="table-wrap">
 		<table>
 			<thead>
 				<tr>
 					<th>Email</th>
-					<th>Engedélyezett toolok</th>
-					<th>Scope-ok</th>
+					<th>Név</th>
 					<th>Utolsó bejelentkezés</th>
 					<th>Státusz</th>
+					<th></th>
 				</tr>
 			</thead>
 			<tbody>
-				<tr class="mock-row">
-					<td>pelda@adamgroup.hu</td>
-					<td>tools/list, logs/read</td>
-					<td>admin</td>
-					<td>2026-05-17 14:00</td>
-					<td><span class="badge active">Aktív</span></td>
-				</tr>
-				<tr class="mock-row">
-					<td>masik@adamgroup.hu</td>
-					<td>tools/list</td>
-					<td>read</td>
-					<td>–</td>
-					<td><span class="badge disabled">Letiltott</span></td>
-				</tr>
+				{users.length === 0 ? (
+					<tr>
+						<td colspan="5" class="empty">Nincs felhasználó az adatbázisban.</td>
+					</tr>
+				) : (
+					users.map((user) => (
+						<tr>
+							<td>{user.email}</td>
+							<td>{user.display_name ?? "–"}</td>
+							<td>{user.last_login ?? "–"}</td>
+							<td>
+								<span class={`badge ${user.is_active ? "active" : "disabled"}`}>
+									{user.is_active ? "Aktív" : "Letiltott"}
+								</span>
+							</td>
+							<td><a href={`/users/${encodeURIComponent(user.email)}`}>Részletek</a></td>
+						</tr>
+					))
+				)}
 			</tbody>
 		</table>
-		<p class="mock-note">A fenti adatok illusztrációs célúak. Az éles adatok betöltése még nem érhető el.</p>
 	</div>
 </AdminLayout>
 
 <style>
-	.mock-banner {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		background: #fff8e1;
-		border: 1px solid #f9a825;
-		border-radius: 0.5rem;
-		padding: 0.75rem 1rem;
+	.page-header {
 		margin-bottom: 1.5rem;
-		color: #7a5c00;
-		font-size: 0.9rem;
 	}
 
-	.mock-banner svg {
-		flex-shrink: 0;
-		color: #f9a825;
-	}
-
-	h1 {
-		margin-bottom: 1rem;
-	}
-
-	.mock-table {
+	.table-wrap {
 		overflow-x: auto;
 	}
 
 	table {
 		border-collapse: collapse;
 		width: 100%;
-		opacity: 0.5;
-		pointer-events: none;
-		user-select: none;
+		font-size: 0.875rem;
 	}
 
 	th, td {
 		border: 1px solid #ddd;
 		padding: 0.5rem 0.75rem;
 		text-align: left;
-		font-size: 0.875rem;
 	}
 
 	th {
 		background: #f5f5f5;
 		font-weight: 600;
+	}
+
+	.empty {
+		color: #999;
+		text-align: center;
+		padding: 2rem;
 	}
 
 	.badge {
@@ -109,12 +95,5 @@ import AdminLayout from "../../components/AdminLayout.astro";
 	.badge.disabled {
 		background: #fce8e6;
 		color: #b71c1c;
-	}
-
-	.mock-note {
-		margin-top: 0.75rem;
-		color: #999;
-		font-size: 0.8rem;
-		font-style: italic;
 	}
 </style>
