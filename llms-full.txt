@@ -1,0 +1,316 @@
+# mcp-admin – Teljes technikai referencia
+
+> Admin dashboard az adam-mcp MCP szerver kezeléséhez. Astro 5 SSR + Cloudflare Workers, D1 adatbázis és R2 tárhely.
+
+Az **mcp-admin** egy belső admin felület, amely az `adam-mcp` Cloudflare Worker MCP szerver adatait jeleníti meg és kezeli. Token-alapú hitelesítéssel, HMAC-aláírt session cookie-val védett. Minden oldal SSR módban fut Cloudflare Workers-en.
+
+---
+
+## Tech stack
+
+- **Framework**: Astro 5.x (SSR mód, `output: "server"`)
+- **Adapter**: `@astrojs/cloudflare` (platformProxy engedélyezve)
+- **Integrations**: `@astrojs/mdx`, `@astrojs/sitemap`
+- **Language**: TypeScript 5.x
+- **Deploy**: Cloudflare Workers (Wrangler 4.x)
+- **Storage**: Cloudflare D1 (SQLite), Cloudflare R2
+- **UI**: Vanilla Astro + inline CSS (nincs React/Vue/Svelte)
+
+---
+
+## Cloudflare erőforrások
+
+| Binding      | Típus | Neve                  | Leírás                                    |
+| :----------- | :---- | :-------------------- | :---------------------------------------- |
+| `DATABASE`   | D1    | `adam-mcp`            | Fő adatbázis (users, tools, audit_logs)   |
+| `AUDIT_LOGS` | R2    | `adam-mcp-audit-log`  | R2-alapú audit log fájlok (legacy)        |
+| `HANDOVERS`  | R2    | `adam-mcp-handovers`  | Handover dokumentumok                     |
+
+Worker titkok:
+- `ADMIN_TOKEN` – bejelentkezési token (POST /login-nál ellenőrzött)
+- `SESSION_SECRET` – HMAC-SHA256 aláírókulcs a session cookie-hoz
+
+---
+
+## D1 adatbázis séma
+
+### users
+```sql
+CREATE TABLE users (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  email        TEXT    NOT NULL UNIQUE,
+  display_name TEXT,
+  is_active    INTEGER NOT NULL DEFAULT 1,  -- 1=aktív, 0=letiltott
+  created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+  last_login   TEXT
+);
+CREATE INDEX idx_users_email ON users(email);
+```
+
+### scopes
+```sql
+CREATE TABLE scopes (
+  id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT    NOT NULL UNIQUE
+);
+```
+
+Seed scopes: `rentman.equipment.read`, `rentman.project.read`, `rentman.invoice.read`, `rentman.dashboard.read`, `rentman.crew.read`, `rentman.cegelosztas.read`, `handover.write`, `handover.read`, `attachment.read`, `attachment.write`, `odoo.read`
+
+### tools
+```sql
+CREATE TABLE tools (
+  name     TEXT    PRIMARY KEY,
+  scope_id INTEGER NOT NULL REFERENCES scopes(id) ON DELETE RESTRICT
+);
+CREATE INDEX idx_tools_scope_id ON tools(scope_id);
+```
+
+Seed tools (részleges lista scope szerint):
+- **rentman.equipment.read**: `list_equipment`, `get_equipment_item`, `search_equipment`, `list_equipment_categories`, `rentman_audit_inventory`, `rentman_equipment_bulk`, `rentman_equipment_count_diff`, `rentman_kit_components`, `rentman_kit_audit`, `rentman_red_shortage`, `rentman_kit_browse`, `rentman_kit_contents`, `rentman_kit_tree`, `rentman_equipment_export`, `rentman_equipment_field_audit`
+- **rentman.project.read**: `rentman_project_search`, `rentman_project_get`, `rentman_subproject_get`, `rentman_subproject_costs`, `rentman_subproject_health`, `rentman_critical_projects`, `rentman_upcoming_events`, `rentman_overdue_offers`, `rentman_offer_expiry_forecast`, `rentman_template_list`, `rentman_template_get`, `rentman_template_variables`, `rentman_template_diff`, `rentman_briefpapier_list`, `rentman_project_templates_list`, `rentman_project_template_get`, `rentman_project_template_usage`, `rentman_project_template_diff`
+- **rentman.invoice.read**: `rentman_overdue_invoices`, `szamlazz_payment_diff`, `aam_keret_status`
+- **rentman.dashboard.read**: `rentman_pv_dashboard`, `rentman_daily_briefing`
+- **rentman.crew.read**: `rentman_crew_assignments`, `rentman_crew_list`, `rentman_function_list`, `rentman_function_group_list`, `rentman_rate_table`, `rentman_monthly_schedule_per_person`, `rentman_crew_cost_per_project`, `rentman_planning_conflicts`
+- **rentman.cegelosztas.read**: `cegelosztas_audit`
+- **handover.write**: `save_daily_report`, `save_handover`, `delete_handover`
+- **handover.read**: `list_handover_inbox`, `read_handover`
+- **attachment.read**: `list_attachments`, `read_attachment`
+- **attachment.write**: `save_attachment`, `delete_attachment`
+- **odoo.read**: `odoo_partner_search`, `odoo_partner_get`, `odoo_product_query`, `odoo_product_weights`, `odoo_product_full_audit`, `odoo_bom_lines`, `odoo_bom_audit`, `odoo_so_search`, `odoo_so_get`, `odoo_so_lines_for_product`, `odoo_po_search`, `odoo_po_get`, `odoo_po_lines_for_product`, `odoo_supplierinfo_for_product`, `odoo_pricelist_list`, `odoo_pricelist_items`, `odoo_pricelist_apply`, `odoo_stock`, `odoo_record_query`
+
+### user_scope_permissions
+```sql
+CREATE TABLE user_scope_permissions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+  scope_id   INTEGER NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
+  granted_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, scope_id)
+);
+CREATE INDEX idx_usp_user_id  ON user_scope_permissions(user_id);
+CREATE INDEX idx_usp_scope_id ON user_scope_permissions(scope_id);
+```
+
+### audit_logs
+```sql
+CREATE TABLE audit_logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts         TEXT    NOT NULL DEFAULT (datetime('now')),
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  tool_name  TEXT    NOT NULL,
+  allowed    INTEGER NOT NULL,  -- 1=engedélyezett, 0=tiltott
+  request_id TEXT
+);
+```
+
+---
+
+## Útvonalak
+
+| Útvonal               | Metódus | Leírás                                                         |
+| :-------------------- | :------ | :------------------------------------------------------------- |
+| `/login`              | GET     | Bejelentkezési űrlap                                           |
+| `/login`              | POST    | Token ellenőrzés; siker esetén session cookie + redirect `/`  |
+| `/logout`             | POST    | Session cookie törlése, redirect `/login`-ra                  |
+| `/`                   | GET     | Dashboard: KPI, 30 napos trend, top tools/users, recent logs  |
+| `/logs`               | GET     | Audit log lista; szűrők: user, tool, from, to, allowed; page  |
+| `/logs/[id]`          | GET     | Egyedi audit log bejegyzés részletei                          |
+| `/logs/export.csv`    | GET     | Szűrt audit logok CSV exportja                                |
+| `/users`              | GET     | Felhasználók listája                                           |
+| `/users`              | POST    | Új felhasználó létrehozása (email, display_name)              |
+| `/users/[email]`      | GET     | Felhasználó részletei, scope-jogosultságok                    |
+| `/users/[email]`      | POST    | activate/disable/save_permissions action                      |
+| `/users/import`       | GET/POST| Tömeges felhasználó import                                    |
+| `/handovers`          | GET     | R2 handover-fájlok listája; szűrő: prefix; cursor lapozás    |
+| `/handovers/download` | GET     | R2 fájl letöltése (key query param)                           |
+| `/tools`              | GET     | MCP tool-regiszter; szűrő: q (névkeresés)                     |
+| `/tools/[name]`       | GET     | Tool részletei (scope, leírás)                                |
+
+---
+
+## Hitelesítés és session kezelés
+
+**Fájl**: `src/utils/auth.ts`
+
+- `SESSION_COOKIE_NAME = "session"`
+- Cookie opciók: `httpOnly: true`, `secure: true`, `sameSite: "strict"`, `path: "/"`
+- Session érték formátuma: `base64url(token).HMAC-SHA256-signature`
+- `createSessionCookieValue(token, secret)` – session értéket generál
+- `verifySessionCookie(value, token, secret)` – ellenőrzi a session érvényességét, timing-safe összehasonlítással
+- Ha `SESSION_SECRET` nincs beállítva, Worker-instance-onkénti random titkot generál (session Worker-újraindításkor elvész – elfogadható single-admin toolnál)
+
+**Fájl**: `src/middleware.ts`
+
+- Minden kérést intersept, kivéve `/login`
+- `Astro.locals.runtime.env` – Cloudflare runtime env
+- Érvénytelen session → cookie törlés + redirect `/login`-ra
+
+---
+
+## Audit log (D1) – `src/utils/audit.ts`
+
+### Interfészek
+- `AuditLogRow`: `{ id, ts, user_id, tool_name, allowed, request_id, user_email?, user_display_name? }`
+- `AuditLogFilters`: `{ user_email?, user_unknown?, tool_name?, allowed?, from?, to? }`
+- `DashboardStats`: `{ todayTotal, todayDenied, activeUsers, topToolName, topToolCount }`
+- `DailyCallRow`: `{ day: "YYYY-MM-DD", total, denied }`
+- `TopToolRow`: `{ tool_name, total, denied }`
+- `TopUserRow`: `{ email, display_name, total, denied }`
+
+### Függvények
+- `writeAuditLog(db, { user_id, tool_name, allowed, request_id })` – bejegyzés írása (az adam-mcp Worker hívja)
+- `listAuditLogsD1(db, filters, page, pageSize)` – lapozott lista `audit_logs LEFT JOIN users`-szal
+- `getAuditLogD1(db, id)` – egyedi bejegyzés
+- `listAuditToolsD1(db)` – distinct tool nevek ABC sorrendben (dropdown feltöltéshez)
+- `listAuditUsersD1(db)` – regisztrált user lista (dropdown feltöltéshez)
+- `getDashboardStats(db)` – KPI számok (mai hívások, aktív userek, top tool)
+- `getDailyCallStats(db, days=30)` – napi hívásszámok (UTC nap szerint)
+- `getTopTools(db, limit=10)` – top N tool összes idő alatt
+- `getTopUsers(db, limit=5)` – top N aktív felhasználó összes idő alatt
+- `localInputToUtc(localStr)` – CET/CEST datetime-local string UTC ISO8601-re alakítása
+
+---
+
+## Felhasználókezelés (D1) – `src/utils/users.ts`
+
+### Interfészek
+- `User`: `{ id, email, display_name, is_active, created_at, last_login }`
+- `Scope`: `{ id, name }`
+- `UserScopePermission`: `{ scope_id, scope_name, granted_at }`
+
+### Függvények
+- `getUserByEmail(db, email)` – user lekérése email alapján
+- `listAllUsers(db)` – összes user ABC sorrendben
+- `getUserWithPermissions(db, email)` – user + scope-jogosultságai
+- `createUser(db, email, displayName)` – új user; ütközés esetén hibát ad vissza
+- `upsertUser(db, email, displayName)` – login-kori upsert (last_login frissítés)
+- `setUserActive(db, email, active)` – aktiválás/letiltás
+- `updateDisplayName(db, email, displayName)` – megjelenítési név módosítás
+- `grantScopePermission(db, userId, scopeId)` – scope engedélyezése
+- `revokeScopePermission(db, userId, scopeId)` – scope visszavonása
+
+---
+
+## Tool és scope kezelés (D1) – `src/utils/tools.ts`
+
+### Interfészek
+- `Tool`: `{ name, scope_id, scope_name }`
+- `Scope`: `{ id, name }`
+
+### Függvények
+- `listAllTools(db)` – összes tool JOIN scopes-szal, scope/name szerint rendezve
+- `listAllScopes(db)` – összes scope névsorban
+
+---
+
+## R2 audit log (legacy) – `src/utils/logs.ts`
+
+### Interfészek
+- `AuditLogEntry`: `{ id, key, timestamp, userEmail, tool, success, requestSummary, requestPayload, responsePayload }`
+- `LogFilters`: `{ user?, tool?, from?, to? }`
+
+### Függvények
+- `listAuditLogs(bucket, filters, { cursor?, limit? })` – R2 listing + JSON parse + szűrés
+- `getAuditLog(bucket, key)` – egyedi R2 objektum olvasása
+- `exportAuditLogsCsv(bucket, filters)` – CSV generálás (max 20 oldal × 100 elem)
+
+---
+
+## Projekt fájlstruktúra
+
+```
+mcp-admin/
+├── astro.config.mjs              # Astro konfiguráció (SSR, cloudflare adapter, mdx, sitemap)
+├── package.json                  # Függőségek, scripts
+├── tsconfig.json                 # TypeScript konfiguráció
+├── wrangler.json                 # Cloudflare Worker konfiguráció (D1, R2, observability)
+├── worker-configuration.d.ts     # Cloudflare env típusdefiníciók
+├── migrations/
+│   └── 0001_initial_schema.sql   # Teljes D1 séma + seed scopes + seed tools
+├── public/                       # Statikus assets
+└── src/
+    ├── consts.ts                 # SITE_TITLE="MCP Admin", SITE_DESCRIPTION
+    ├── content.config.ts         # Astro content collections (blog)
+    ├── env.d.ts                  # Astro env típusok
+    ├── middleware.ts             # Globális session hitelesítés
+    ├── components/
+    │   ├── AdminLayout.astro     # Fő admin layout wrapper
+    │   ├── BaseHead.astro        # HTML head meta tagek
+    │   ├── Header.astro          # Navigációs sáv
+    │   ├── Footer.astro          # Lábléc
+    │   ├── FormattedDate.astro   # Dátum formázó komponens
+    │   └── HeaderLink.astro      # Navigációs link komponens
+    ├── layouts/
+    │   └── BlogPost.astro        # Blog bejegyzés layout
+    ├── pages/
+    │   ├── index.astro           # Dashboard főoldal
+    │   ├── login.astro           # Bejelentkezési oldal
+    │   ├── logout.ts             # POST logout endpoint
+    │   ├── about.astro           # About oldal (placeholder)
+    │   ├── rss.xml.js            # RSS feed generátor
+    │   ├── blog/
+    │   │   ├── index.astro       # Blog bejegyzések listája
+    │   │   └── [...slug].astro   # Blog bejegyzés oldal
+    │   ├── logs/
+    │   │   ├── index.astro       # Audit log lista + szűrők + lapozás
+    │   │   ├── [id].astro        # Egyedi audit log bejegyzés
+    │   │   └── export.csv.ts     # CSV export API endpoint
+    │   ├── users/
+    │   │   ├── index.astro       # Felhasználók listája + létrehozás form
+    │   │   ├── [email].astro     # Felhasználó részletek + jogosultság-kezelés
+    │   │   └── import.astro      # Tömeges import oldal
+    │   ├── handovers/
+    │   │   ├── index.astro       # Handover R2 fájlok böngészője
+    │   │   └── download.ts       # R2 fájl letöltés/proxy endpoint
+    │   └── tools/
+    │       ├── index.astro       # MCP tool-regiszter lista
+    │       └── [name].astro      # Tool részletei
+    ├── styles/                   # Globális stílusok
+    └── utils/
+        ├── auth.ts               # HMAC-SHA256 session cookie kezelés
+        ├── audit.ts              # D1 audit log + dashboard statisztikák
+        ├── users.ts              # D1 user + scope-jogosultság CRUD
+        ├── tools.ts              # D1 tool + scope lekérdezések
+        └── logs.ts               # R2 audit log olvasás (legacy)
+```
+
+---
+
+## npm scripts
+
+| Script       | Parancs                                              |
+| :----------- | :--------------------------------------------------- |
+| `dev`        | `astro dev`                                          |
+| `build`      | `astro build`                                        |
+| `preview`    | `astro build && wrangler dev`                        |
+| `check`      | `astro build && tsc && wrangler deploy --dry-run`    |
+| `deploy`     | `wrangler deploy`                                    |
+| `cf-typegen` | `wrangler types`                                     |
+
+---
+
+## Függőségek
+
+### Runtime
+- `astro` 5.16.9
+- `@astrojs/cloudflare` 12.6.12
+- `@astrojs/mdx` 4.3.13
+- `@astrojs/rss` 4.0.14
+- `@astrojs/sitemap` 3.6.1
+- `typescript` 5.9.3
+
+### Dev
+- `wrangler` 4.56.0
+
+Node.js >= 22 szükséges.
+
+---
+
+## Biztonsági megjegyzések
+
+1. Az `ADMIN_TOKEN` és `SESSION_SECRET` értékeket **soha** ne commitold a forráskódba; Wrangler secretként add meg.
+2. A session cookie HMAC-SHA256-tal aláírt; timing-safe összehasonlítással ellenőrzött.
+3. Ha `SESSION_SECRET` nincs beállítva, Worker-instance-onkénti random titkot használ – sessions Worker-újraindításkor elvesznek.
+4. Az összes nem-login útvonalat a middleware védi; érvénytelen session esetén redirect `/login`-ra.
+5. A D1 lekérdezések paraméterezett prepared statement-eket használnak (SQL injection elleni védelem).
