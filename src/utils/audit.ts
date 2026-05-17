@@ -126,10 +126,8 @@ export async function listAuditLogsD1(
   let idx = 1;
 
   if (filters.user_unknown) {
-    // Ismeretlen: null user_id (nem regisztrált vagy nem azonosított)
     conditions.push(`a.user_id IS NULL`);
   } else if (filters.user_email) {
-    // Pontos egyezés – dropdown-ból jön
     conditions.push(`u.email = ?${idx++}`);
     bindings.push(filters.user_email);
   }
@@ -206,4 +204,160 @@ export async function getAuditLogD1(
     .first<AuditLogRow>();
   if (!row) return null;
   return { ...row, allowed: Boolean(row.allowed) };
+}
+
+// ─── Dashboard statisztikák ──────────────────────────────────────────────────
+
+export interface DashboardStats {
+  /** Összes hívás ma (UTC nap) */
+  todayTotal: number;
+  /** Tiltott hívások ma */
+  todayDenied: number;
+  /** Aktív userek száma (is_active = 1) */
+  activeUsers: number;
+  /** Legtöbbet hívott tool neve (összesített) */
+  topToolName: string | null;
+  /** Legtöbbet hívott tool hívásszáma */
+  topToolCount: number;
+}
+
+export interface DailyCallRow {
+  /** YYYY-MM-DD (UTC) */
+  day: string;
+  total: number;
+  denied: number;
+}
+
+export interface TopToolRow {
+  tool_name: string;
+  total: number;
+  denied: number;
+}
+
+export interface TopUserRow {
+  email: string;
+  display_name: string | null;
+  total: number;
+  denied: number;
+}
+
+/**
+ * KPI számok a dashboard fejlécéhez.
+ */
+export async function getDashboardStats(db: D1Database): Promise<DashboardStats> {
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+
+  const [todayRow, usersRow, topToolRow] = await Promise.all([
+    db
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied
+         FROM audit_logs
+         WHERE ts >= ?1 AND ts < date(?1, '+1 day')`,
+      )
+      .bind(today)
+      .first<{ total: number; denied: number }>(),
+
+    db
+      .prepare(`SELECT COUNT(*) AS cnt FROM users WHERE is_active = 1`)
+      .first<{ cnt: number }>(),
+
+    db
+      .prepare(
+        `SELECT tool_name, COUNT(*) AS cnt
+         FROM audit_logs
+         GROUP BY tool_name
+         ORDER BY cnt DESC
+         LIMIT 1`,
+      )
+      .first<{ tool_name: string; cnt: number }>(),
+  ]);
+
+  return {
+    todayTotal:   todayRow?.total   ?? 0,
+    todayDenied:  todayRow?.denied  ?? 0,
+    activeUsers:  usersRow?.cnt     ?? 0,
+    topToolName:  topToolRow?.tool_name ?? null,
+    topToolCount: topToolRow?.cnt       ?? 0,
+  };
+}
+
+/**
+ * Napi hívásszámok az elmúlt N napra (UTC napok szerint csoportosítva).
+ * Hiányzó napok nem szerepelnek a listában — a renderelő töltse ki nullával.
+ */
+export async function getDailyCallStats(
+  db: D1Database,
+  days = 30,
+): Promise<DailyCallRow[]> {
+  const since = new Date();
+  since.setUTCDate(since.getUTCDate() - days + 1);
+  const sinceStr = since.toISOString().slice(0, 10);
+
+  const rows = await db
+    .prepare(
+      `SELECT
+         substr(ts, 1, 10) AS day,
+         COUNT(*) AS total,
+         SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied
+       FROM audit_logs
+       WHERE ts >= ?1
+       GROUP BY day
+       ORDER BY day ASC`,
+    )
+    .bind(sinceStr)
+    .all<DailyCallRow>();
+
+  return rows.results ?? [];
+}
+
+/**
+ * Top 10 legtöbbet hívott tool (összesített, összes idő).
+ */
+export async function getTopTools(
+  db: D1Database,
+  limit = 10,
+): Promise<TopToolRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT
+         tool_name,
+         COUNT(*) AS total,
+         SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied
+       FROM audit_logs
+       GROUP BY tool_name
+       ORDER BY total DESC
+       LIMIT ?1`,
+    )
+    .bind(limit)
+    .all<TopToolRow>();
+
+  return rows.results ?? [];
+}
+
+/**
+ * Top 5 legaktívabb felhasználó (regisztrált, összes idő).
+ */
+export async function getTopUsers(
+  db: D1Database,
+  limit = 5,
+): Promise<TopUserRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT
+         u.email,
+         u.display_name,
+         COUNT(*) AS total,
+         SUM(CASE WHEN a.allowed = 0 THEN 1 ELSE 0 END) AS denied
+       FROM audit_logs a
+       JOIN users u ON u.id = a.user_id
+       GROUP BY u.id
+       ORDER BY total DESC
+       LIMIT ?1`,
+    )
+    .bind(limit)
+    .all<TopUserRow>();
+
+  return rows.results ?? [];
 }
