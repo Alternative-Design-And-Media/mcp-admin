@@ -15,7 +15,10 @@ export interface AuditLogRow {
 }
 
 export interface AuditLogFilters {
+  /** Pontos e-mail cím (registered user); "__unknown__" = null user_id szűrés */
   user_email?: string;
+  /** Ismeretlen (null user_id) szőrés – ha true, user_email figyelmen kívül marad */
+  user_unknown?: boolean;
   tool_name?: string;
   allowed?: boolean;
   from?: string;
@@ -73,39 +76,41 @@ export async function listAuditToolsD1(db: D1Database): Promise<string[]> {
 }
 
 /**
+ * Visszaadja a regisztrált felhasználókat (id, email, display_name) ABC sorrendben.
+ * A Felhasználó szűrő dropdown feltöltéséhez.
+ */
+export interface AuditUserOption {
+  id: number;
+  email: string;
+  display_name: string | null;
+}
+
+export async function listAuditUsersD1(db: D1Database): Promise<AuditUserOption[]> {
+  const rows = await db
+    .prepare(
+      `SELECT id, email, display_name FROM users ORDER BY email ASC`,
+    )
+    .all<AuditUserOption>();
+  return rows.results ?? [];
+}
+
+/**
  * CET/CEST időzónában értelmezett datetime-local string ("YYYY-MM-DDTHH:MM")
  * UTC ISO8601-re alakítása a D1 ts oszlop szűréséhez.
- *
- * A D1 ts mező UTC-ben tárol (datetime('now') = UTC).
- * A datetime-local input értéke CET/CEST-ben érkezik.
- * Ezért a szűrőértéket vissza kell alakítani UTC-re mielőtt SQL-be kerül.
- *
- * Egyszerű offset közelítés:
- *   - CEST (nyári): UTC+2  → kivon 2 órát
- *   - CET  (téli):  UTC+1  → kivon 1 órát
- * A Cloudflare Worker edge runtime Date objektuma UTC-t használ,
- * ezért kézzel számítjuk az offsetet.
  */
 export function localInputToUtc(localStr: string): string {
-  // "YYYY-MM-DDTHH:MM" → Date UTC
-  const date = new Date(localStr + ":00Z"); // parse as UTC first
-  // Determine CET/CEST offset for the given date (Europe/Budapest)
-  // DST: last Sunday of March → last Sunday of October
+  const date = new Date(localStr + ":00Z");
   const year = date.getUTCFullYear();
-  const dstStart = lastSundayOfMonth(year, 2); // March = index 2
-  const dstEnd   = lastSundayOfMonth(year, 9); // October = index 9
+  const dstStart = lastSundayOfMonth(year, 2);
+  const dstEnd   = lastSundayOfMonth(year, 9);
   const offsetHours = date >= dstStart && date < dstEnd ? 2 : 1;
-  // Subtract the offset to get UTC
   return new Date(date.getTime() - offsetHours * 3600_000).toISOString();
 }
 
 function lastSundayOfMonth(year: number, month: number): Date {
-  // month: 0-indexed (2=March, 9=October)
-  // Find last day of month, then go back to Sunday
   const lastDay = new Date(Date.UTC(year, month + 1, 0));
-  const dayOfWeek = lastDay.getUTCDay(); // 0=Sunday
+  const dayOfWeek = lastDay.getUTCDay();
   lastDay.setUTCDate(lastDay.getUTCDate() - dayOfWeek);
-  // DST transition at 02:00 local = 01:00 UTC
   lastDay.setUTCHours(1, 0, 0, 0);
   return lastDay;
 }
@@ -120,12 +125,16 @@ export async function listAuditLogsD1(
   const bindings: unknown[] = [];
   let idx = 1;
 
-  if (filters.user_email) {
-    conditions.push(`u.email LIKE ?${idx++}`);
-    bindings.push(`%${filters.user_email}%`);
+  if (filters.user_unknown) {
+    // Ismeretlen: null user_id (nem regisztrált vagy nem azonosított)
+    conditions.push(`a.user_id IS NULL`);
+  } else if (filters.user_email) {
+    // Pontos egyezés – dropdown-ból jön
+    conditions.push(`u.email = ?${idx++}`);
+    bindings.push(filters.user_email);
   }
+
   if (filters.tool_name) {
-    // Pontos egyezés (dropdown-ból jön)
     conditions.push(`a.tool_name = ?${idx++}`);
     bindings.push(filters.tool_name);
   }
@@ -134,7 +143,6 @@ export async function listAuditLogsD1(
     bindings.push(filters.allowed ? 1 : 0);
   }
   if (filters.from) {
-    // from értéke CET/CEST datetime-local string → UTC-re alakítva
     conditions.push(`a.ts >= ?${idx++}`);
     bindings.push(localInputToUtc(filters.from));
   }
