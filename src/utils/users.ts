@@ -1,7 +1,7 @@
 export interface User {
   email: string;
   display_name: string | null;
-  is_active: number; // 1 = active, 0 = disabled
+  is_active: number;
   created_at: string;
   last_login: string | null;
 }
@@ -27,6 +27,21 @@ export async function getUserWithPermissions(
     db.prepare("SELECT tool_name, granted_at FROM user_tool_permissions WHERE email = ? ORDER BY tool_name ASC").bind(email).all<UserToolPermission>(),
   ]);
   return { user: userResult ?? null, permissions: permResult.results };
+}
+
+export async function createUser(
+  db: D1Database,
+  email: string,
+  displayName: string | null
+): Promise<{ success: boolean; error?: string }> {
+  const existing = await db.prepare("SELECT email FROM users WHERE email = ?").bind(email).first();
+  if (existing) {
+    return { success: false, error: "Ez az email cím már létezik." };
+  }
+  await db.prepare(
+    "INSERT INTO users (email, display_name) VALUES (?, ?)"
+  ).bind(email, displayName || null).run();
+  return { success: true };
 }
 
 export async function setUserActive(db: D1Database, email: string, active: boolean): Promise<void> {
