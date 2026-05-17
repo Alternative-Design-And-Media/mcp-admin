@@ -84,6 +84,7 @@ Scope-ok (vesszővel)
 <tr>
 <th>Email</th>
 <th>Engedélyezett toolok</th>
+<th>Scope-ok</th>
 <th>Utolsó bejelentkezés</th>
 <th>Státusz</th>
 </tr>
@@ -91,13 +92,14 @@ Scope-ok (vesszővel)
 <tbody>
 {usersPage.users.length === 0 ? (
 <tr>
-<td colspan="4">Nincs találat.</td>
+<td colspan="5">Nincs találat.</td>
 </tr>
 ) : (
 usersPage.users.map((user) => (
 <tr>
 <td><a href={`/users/${encodeURIComponent(user.email)}`}>{user.email}</a></td>
 <td>{user.tools.join(", ") || "-"}</td>
+<td>{user.scopes.join(", ") || "-"}</td>
 <td>{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString("hu-HU") : "-"}</td>
 <td>{user.status === "active" ? "Aktív" : "Letiltott"}</td>
 </tr>

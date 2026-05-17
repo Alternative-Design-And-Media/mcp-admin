@@ -1,5 +1,6 @@
 ---
 import AdminLayout from "../../components/AdminLayout.astro";
+import { fetchToolsFromMcp } from "../../utils/tools";
 import {
 deleteUser,
 getUser,
@@ -31,6 +32,16 @@ return Astro.redirect("/users");
 
 let feedback = "";
 let errorMessage = "";
+const availableTools = await fetchToolsFromMcp(env);
+
+function getToolOptions(enabledTools: string[]): string[] {
+	return [
+		...availableTools.map((tool) => tool.name),
+		...enabledTools.filter((tool) => !availableTools.some((item) => item.name === tool)),
+	];
+}
+
+let toolOptions = getToolOptions(user.tools);
 
 if (Astro.request.method === "POST") {
 const formData = await Astro.request.formData();
@@ -52,7 +63,12 @@ feedback = "Felhasználó aktiválva.";
 }
 
 if (action === "save") {
-const tools = parseToolsInput(String(formData.get("tools") ?? ""));
+const tools = parseToolsInput(
+formData
+.getAll("tools")
+.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+.join(","),
+);
 const scopes = parseScopesInput(String(formData.get("scopes") ?? ""));
 const status = String(formData.get("status") ?? "active") === "disabled" ? "disabled" : "active";
 await upsertUser(env.USERS_KV, {
@@ -68,6 +84,8 @@ feedback = "Változások mentve.";
 user = await getUser(env.USERS_KV, email);
 if (!user) {
 errorMessage = "A felhasználó már nem létezik.";
+} else {
+toolOptions = getToolOptions(user.tools);
 }
 }
 ---
@@ -91,8 +109,17 @@ Státusz
 </select>
 </label>
 <label>
-Engedélyezett toolok (vesszővel)
-<input name="tools" type="text" value={user.tools.join(", ")} />
+Engedélyezett toolok
+<ul class="tools-list">
+{toolOptions.map((tool) => (
+<li>
+<label class="checkbox-label">
+<input type="checkbox" name="tools" value={tool} checked={user.tools.includes(tool)} />
+{tool}
+</label>
+</li>
+))}
+</ul>
 </label>
 <label>
 Scope-ok (vesszővel)
@@ -142,6 +169,19 @@ padding: 0.5rem;
 display: flex;
 gap: 0.75rem;
 flex-wrap: wrap;
+}
+
+.tools-list {
+list-style: none;
+padding: 0;
+display: grid;
+gap: 0.5rem;
+}
+
+.checkbox-label {
+display: flex;
+align-items: center;
+gap: 0.5rem;
 }
 
 .danger {
