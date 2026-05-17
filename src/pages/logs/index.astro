@@ -1,137 +1,313 @@
 ---
 import AdminLayout from "../../components/AdminLayout.astro";
-import { listAuditLogs } from "../../utils/logs";
+import { listAuditLogsD1 } from "../../utils/audit";
 
-const query = Astro.url.searchParams;
+const db: D1Database = Astro.locals.runtime.env.DATABASE;
+const q = Astro.url.searchParams;
+
 const filters = {
-user: query.get("user")?.trim() || undefined,
-tool: query.get("tool")?.trim() || undefined,
-from: query.get("from")?.trim() || undefined,
-to: query.get("to")?.trim() || undefined,
+  user_email: q.get("user")?.trim()  || undefined,
+  tool_name:  q.get("tool")?.trim()  || undefined,
+  from:       q.get("from")?.trim()  || undefined,
+  to:         q.get("to")?.trim()    || undefined,
+  allowed:    q.has("allowed")
+    ? q.get("allowed") === "1"
+    : undefined,
 };
-const cursor = query.get("cursor") ?? undefined;
 
-const result = await listAuditLogs(Astro.locals.runtime.env.AUDIT_LOGS, filters, {
-cursor,
-limit: 20,
-});
+const page     = Math.max(1, Number(q.get("page") ?? 1));
+const pageSize = 50;
 
-const nextUrl = new URL(Astro.url.pathname, Astro.url);
-if (result.nextCursor) {
-nextUrl.searchParams.set("cursor", result.nextCursor);
-}
-for (const [key, value] of Object.entries(filters)) {
-if (value) {
-nextUrl.searchParams.set(key, value);
-}
-}
+const result = await listAuditLogsD1(db, filters, page, pageSize);
+const totalPages = Math.max(1, Math.ceil(result.total / pageSize));
 
-const exportUrl = new URL("/logs/export.csv", Astro.url);
-for (const [key, value] of Object.entries(filters)) {
-if (value) {
-exportUrl.searchParams.set(key, value);
-}
+function buildUrl(overrides: Record<string, string | number | undefined>) {
+  const p = new URLSearchParams();
+  const merged = {
+    user:    filters.user_email,
+    tool:    filters.tool_name,
+    from:    filters.from,
+    to:      filters.to,
+    allowed: filters.allowed === undefined ? undefined : filters.allowed ? "1" : "0",
+    page:    String(page),
+    ...Object.fromEntries(
+      Object.entries(overrides).map(([k, v]) => [k, v === undefined ? undefined : String(v)])
+    ),
+  };
+  for (const [k, v] of Object.entries(merged)) {
+    if (v !== undefined && v !== "") p.set(k, v);
+  }
+  return `/logs?${p.toString()}`;
 }
 ---
 
-<AdminLayout title="Audit logok" description="Audit logok megjelenítése és szűrése">
-<h1>Audit logok</h1>
+<AdminLayout title="Audit logok">
+  <div class="page-header">
+    <h1>Audit logok</h1>
+    <span class="total-badge">{result.total.toLocaleString("hu-HU")} bejegyzés</span>
+  </div>
 
-<form method="get" class="filters">
-<label>
-Felhasználó
-<input type="search" name="user" value={filters.user ?? ""} placeholder="user@ceg.hu" />
-</label>
-<label>
-Tool
-<input type="search" name="tool" value={filters.tool ?? ""} placeholder="tools/list" />
-</label>
-<label>
-Kezdő dátum
-<input type="datetime-local" name="from" value={filters.from ?? ""} />
-</label>
-<label>
-Záró dátum
-<input type="datetime-local" name="to" value={filters.to ?? ""} />
-</label>
-<div class="buttons">
-<button type="submit">Szűrés</button>
-<a href={exportUrl.toString()}>CSV export</a>
-</div>
-</form>
+  <!-- Szűrők -->
+  <section class="card filter-card">
+    <form method="get" class="filter-form">
+      <div class="filter-row">
+        <label class="filter-field">
+          <span>Felhasználó</span>
+          <input type="search" name="user" value={filters.user_email ?? ""} placeholder="user@ceg.hu" />
+        </label>
+        <label class="filter-field">
+          <span>Tool</span>
+          <input type="search" name="tool" value={filters.tool_name ?? ""} placeholder="rentman_kit_components" />
+        </label>
+        <label class="filter-field">
+          <span>-től</span>
+          <input type="datetime-local" name="from" value={filters.from ?? ""} />
+        </label>
+        <label class="filter-field">
+          <span>-ig</span>
+          <input type="datetime-local" name="to" value={filters.to ?? ""} />
+        </label>
+        <label class="filter-field filter-field--select">
+          <span>Állapot</span>
+          <select name="allowed">
+            <option value="" selected={filters.allowed === undefined}>Mind</option>
+            <option value="1" selected={filters.allowed === true}>Engedélyezett</option>
+            <option value="0" selected={filters.allowed === false}>Tiltott</option>
+          </select>
+        </label>
+      </div>
+      <div class="filter-actions">
+        <button type="submit" class="btn btn-primary">Szűrés</button>
+        <a href="/logs" class="btn btn-ghost">Törlés</a>
+      </div>
+    </form>
+  </section>
 
-<table>
-<thead>
-<tr>
-<th>Időpont</th>
-<th>Felhasználó</th>
-<th>Tool</th>
-<th>Állapot</th>
-<th>Kérés összefoglaló</th>
-</tr>
-</thead>
-<tbody>
-{result.logs.length === 0 ? (
-<tr>
-<td colspan="5">Nincs találat.</td>
-</tr>
-) : (
-result.logs.map((log) => (
-<tr>
-<td><a href={`/logs/${log.id}`}>{new Date(log.timestamp).toLocaleString("hu-HU")}</a></td>
-<td>{log.userEmail || "-"}</td>
-<td>{log.tool || "-"}</td>
-<td>{log.success ? "Siker" : "Hiba"}</td>
-<td>{log.requestSummary || "-"}</td>
-</tr>
-))
-)}
-</tbody>
-</table>
+  <!-- Táblázat -->
+  <section class="card table-card">
+    <div class="table-wrap">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th class="col-ts">İdőpont</th>
+            <th class="col-user">Felhasználó</th>
+            <th class="col-tool">Tool</th>
+            <th class="col-status">Állapot</th>
+            <th class="col-req">Request ID</th>
+          </tr>
+        </thead>
+        <tbody>
+          {result.logs.length === 0 ? (
+            <tr>
+              <td colspan="5" class="empty-row">Nincs találat a szűrési feltételekre.</td>
+            </tr>
+          ) : (
+            result.logs.map((log) => (
+              <tr class={log.allowed ? "" : "row-denied"}>
+                <td class="col-ts">
+                  <time datetime={log.ts}>
+                    {new Date(log.ts).toLocaleString("hu-HU", { dateStyle: "short", timeStyle: "medium" })}
+                  </time>
+                </td>
+                <td class="col-user">
+                  {log.user_email
+                    ? <a href={`/users/${encodeURIComponent(log.user_email)}`}>{log.user_display_name ?? log.user_email}</a>
+                    : <span class="muted">–</span>
+                  }
+                </td>
+                <td class="col-tool">
+                  <code>{log.tool_name}</code>
+                </td>
+                <td class="col-status">
+                  {log.allowed
+                    ? <span class="badge badge-ok">OK</span>
+                    : <span class="badge badge-deny">Tiltva</span>
+                  }
+                </td>
+                <td class="col-req">
+                  <span class="req-id">{log.request_id ?? <span class="muted">–</span>}</span>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
 
-{result.nextCursor && (
-<p class="pagination">
-<a href={nextUrl.toString()}>Következő oldal</a>
-</p>
-)}
+    <!-- Lapozás -->
+    {totalPages > 1 && (
+      <div class="pagination">
+        {page > 1 && (
+          <a href={buildUrl({ page: page - 1 })} class="btn btn-ghost">&larr; Előző</a>
+        )}
+        <span class="page-info">{page} / {totalPages}</span>
+        {page < totalPages && (
+          <a href={buildUrl({ page: page + 1 })} class="btn btn-ghost">Következő &rarr;</a>
+        )}
+      </div>
+    )}
+  </section>
 </AdminLayout>
 
 <style>
-.filters {
-display: grid;
-gap: 0.75rem;
-margin-bottom: 1rem;
-}
+  /* Header */
+  .page-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+  .page-header h1 { margin: 0; font-size: 1.4rem; }
+  .total-badge {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: #666;
+    background: #f3f3f3;
+    border: 1px solid #e0e0e0;
+    padding: 0.2rem 0.65rem;
+    border-radius: 9999px;
+  }
 
-label {
-display: grid;
-gap: 0.35rem;
-}
+  /* Cards */
+  .card {
+    border: 1px solid #e0e0e0;
+    border-radius: 0.5rem;
+    background: #fff;
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+  }
 
-input,
-button {
-font: inherit;
-padding: 0.5rem;
-}
+  /* Filter form */
+  .filter-card { padding: 0.85rem 1rem; }
+  .filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 0.65rem;
+  }
+  .filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.8rem;
+    color: #555;
+    font-weight: 600;
+  }
+  .filter-field input,
+  .filter-field select {
+    font: inherit;
+    font-size: 0.855rem;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid #d0d0d0;
+    border-radius: 0.375rem;
+    background: #fafafa;
+    color: #222;
+    min-width: 160px;
+  }
+  .filter-field input:focus,
+  .filter-field select:focus {
+    outline: 2px solid #01696f;
+    outline-offset: 1px;
+  }
+  .filter-field--select input, .filter-field--select select { min-width: 120px; }
+  .filter-actions { display: flex; gap: 0.5rem; align-items: center; }
 
-.buttons {
-display: flex;
-gap: 0.75rem;
-align-items: center;
-}
+  /* Table */
+  .table-wrap { overflow-x: auto; }
+  .log-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+  }
+  .log-table thead tr {
+    background: #f5f5f5;
+    border-bottom: 2px solid #e0e0e0;
+  }
+  .log-table thead th {
+    padding: 0.5rem 0.85rem;
+    text-align: left;
+    font-size: 0.77rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #666;
+    white-space: nowrap;
+  }
+  .log-table tbody tr {
+    border-bottom: 1px solid #f0f0f0;
+    transition: background 0.1s;
+  }
+  .log-table tbody tr:last-child { border-bottom: none; }
+  .log-table tbody tr:hover { background: #fafafa; }
+  .log-table tbody tr.row-denied { background: #fff8f8; }
+  .log-table tbody tr.row-denied:hover { background: #fff0f0; }
+  .log-table td {
+    padding: 0.45rem 0.85rem;
+    vertical-align: middle;
+  }
 
-table {
-border-collapse: collapse;
-}
+  /* Column widths */
+  .col-ts    { width: 150px; white-space: nowrap; color: #555; font-size: 0.8rem; }
+  .col-user  { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-tool  { font-family: monospace; font-size: 0.8rem; color: #333; }
+  .col-status { width: 90px; text-align: center; }
+  .col-req   { width: 130px; font-family: monospace; font-size: 0.75rem; color: #888; }
 
-th,
-td {
-border: 1px solid rgb(var(--gray-light));
-padding: 0.5rem;
-vertical-align: top;
-}
+  .col-user a { color: #01696f; text-decoration: none; }
+  .col-user a:hover { text-decoration: underline; }
+  .muted { color: #bbb; }
 
-.pagination {
-margin-top: 1rem;
-}
+  /* Badges */
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+  .badge-ok   { background: #e6f4ea; color: #1e7e34; border: 1px solid #a8d5b5; }
+  .badge-deny { background: #fce8e6; color: #b71c1c; border: 1px solid #f5c6c6; }
+
+  .req-id { font-size: 0.74rem; }
+
+  .empty-row {
+    text-align: center;
+    padding: 2.5rem;
+    color: #999;
+    font-size: 0.875rem;
+  }
+
+  /* Pagination */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    border-top: 1px solid #e0e0e0;
+    background: #f8f8f8;
+  }
+  .page-info { font-size: 0.8rem; color: #666; }
+
+  /* Buttons */
+  .btn {
+    font: inherit;
+    padding: 0.35rem 0.9rem;
+    border-radius: 0.375rem;
+    border: none;
+    cursor: pointer;
+    font-size: 0.855rem;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+  }
+  .btn-primary { background: #01696f; color: #fff; }
+  .btn-primary:hover { background: #0c4e54; }
+  .btn-ghost {
+    background: transparent;
+    color: #444;
+    border: 1px solid #d0d0d0;
+  }
+  .btn-ghost:hover { background: #f0f0f0; }
 </style>
