@@ -10,7 +10,6 @@ import { listAllScopes } from "../../utils/tools";
 
 const db: D1Database = Astro.locals.runtime.env.DATABASE;
 const email = decodeURIComponent(Astro.params.email ?? "");
-
 if (!email) return Astro.redirect("/users");
 
 let feedback = "";
@@ -19,9 +18,7 @@ let feedbackType: "success" | "error" = "success";
 if (Astro.request.method === "POST") {
   const form = await Astro.request.formData();
   const action = form.get("action") as string | null;
-
   const { user } = await getUserWithPermissions(db, email);
-
   if (!user) return Astro.redirect("/users");
 
   if (action === "activate") {
@@ -33,20 +30,16 @@ if (Astro.request.method === "POST") {
   } else if (action === "save_permissions") {
     const allScopeIds = form.getAll("all_scopes").map(Number);
     const checkedScopeIds = new Set(form.getAll("scope").map(Number));
-
     const { permissions: currentPerms } = await getUserWithPermissions(db, email);
     const currentSet = new Set(currentPerms.map((p) => p.scope_id));
-
-    const toGrant  = allScopeIds.filter((id) => checkedScopeIds.has(id) && !currentSet.has(id));
-    const toRevoke = allScopeIds.filter((id) => !checkedScopeIds.has(id) && currentSet.has(id));
-
+    const toGrant  = allScopeIds.filter((id) =>  checkedScopeIds.has(id) && !currentSet.has(id));
+    const toRevoke = allScopeIds.filter((id) => !checkedScopeIds.has(id) &&  currentSet.has(id));
     await Promise.all([
       ...toGrant.map((id)  => grantScopePermission(db, user.id, id)),
       ...toRevoke.map((id) => revokeScopePermission(db, user.id, id)),
     ]);
-
-    const changedCount = toGrant.length + toRevoke.length;
-    feedback = changedCount > 0
+    const changed = toGrant.length + toRevoke.length;
+    feedback = changed > 0
       ? `${toGrant.length} jogosultság megadva, ${toRevoke.length} visszavonva.`
       : "Nem történt változás.";
   }
@@ -56,82 +49,294 @@ const [{ user, permissions }, allScopes] = await Promise.all([
   getUserWithPermissions(db, email),
   listAllScopes(db),
 ]);
-
 if (!user) return Astro.redirect("/users");
 
-const grantedSet = new Set(permissions.map((p) => p.scope_id));
+// Build lookup: scope_id → granted_at
+const grantedMap = new Map<number, string>();
+for (const p of permissions) grantedMap.set(p.scope_id, p.granted_at);
 
-function getGroup(scopeName: string): string {
-  const parts = scopeName.split(".");
-  return parts[0] ?? "egyéb";
-}
-
-type ScopeGroup = { group: string; scopes: typeof allScopes };
-const grouped: ScopeGroup[] = [];
-const groupMap = new Map<string, typeof allScopes>();
-
-for (const scope of allScopes) {
-  const group = getGroup(scope.name);
+// Group scopes by first segment (e.g. "rentman", "odoo", "szamlazz")
+type ScopeRow = { id: number; name: string; grantedAt: string | null };
+type ScopeGroup = { group: string; scopes: ScopeRow[] };
+const groupMap = new Map<string, ScopeRow[]>();
+for (const s of allScopes) {
+  const group = s.name.split(".")[0] ?? "egyéb";
   if (!groupMap.has(group)) groupMap.set(group, []);
-  groupMap.get(group)!.push(scope);
+  groupMap.get(group)!.push({
+    id: s.id,
+    name: s.name,
+    grantedAt: grantedMap.get(s.id) ?? null,
+  });
 }
-for (const [group, scopes] of groupMap) {
-  grouped.push({ group, scopes });
-}
+const grouped: ScopeGroup[] = [];
+for (const [group, scopes] of groupMap) grouped.push({ group, scopes });
+grouped.sort((a, b) => a.group.localeCompare(b.group));
+
+const grantedCount = grantedMap.size;
+const totalCount = allScopes.length;
 ---
 
 <AdminLayout title={`Felhasználó: ${email}`}>
   <div class="page-header">
     <a href="/users" class="back-link">&larr; Vissza</a>
-    <h1>{user.display_name ?? email}</h1>
-    <p class="email-badge">{email}</p>
+    <div>
+      <h1>{user.display_name ?? email}</h1>
+      {user.display_name && <p class="email-sub">{email}</p>}
+    </div>
+    <span class={`status-badge ${user.is_active ? "active" : "inactive"}`}>
+      {user.is_active ? "Aktív" : "Letiltva"}
+    </span>
   </div>
 
-  {feedback && (
-    <div class={`feedback ${feedbackType}`}>{feedback}</div>
-  )}
+  {feedback && <div class={`feedback ${feedbackType}`}>{feedback}</div>}
 
-  <!-- Aktiválás / letiltás -->
+  <!-- Státusz kezélés -->
   <section class="card">
-    <h2>Státusz</h2>
-    <p>Jelenlegi állapot: <strong>{user.is_active ? "Aktív" : "Letiltva"}</strong></p>
-    <form method="POST">
-      {user.is_active
-        ? <button name="action" value="disable"  class="btn btn-danger">Letiltás</button>
-        : <button name="action" value="activate" class="btn btn-primary">Aktiválás</button>
-      }
-    </form>
+    <div class="card-header">
+      <h2>Fiók státusz</h2>
+    </div>
+    <div class="card-body status-row">
+      <span>Létrehozva: <strong>{user.created_at?.slice(0, 10) ?? "–"}</strong></span>
+      <span>Utolsó bejelentkezés: <strong>{user.last_login?.slice(0, 10) ?? "Soha"}</strong></span>
+      <form method="POST" style="margin:0">
+        {user.is_active
+          ? <button name="action" value="disable"  class="btn btn-danger">Letiltás</button>
+          : <button name="action" value="activate" class="btn btn-primary">Aktiválás</button>
+        }
+      </form>
+    </div>
   </section>
 
-  <!-- Jogosultságok -->
+  <!-- Scope jogosultságok -->
   <section class="card">
-    <h2>Scope jogosultságok</h2>
+    <div class="card-header">
+      <h2>Scope jogosultságok</h2>
+      <span class="scope-counter">{grantedCount} / {totalCount} scope aktiválva</span>
+    </div>
+
     <form method="POST">
       <input type="hidden" name="action" value="save_permissions" />
 
-      {grouped.map(({ group, scopes }) => (
-        <div class="scope-group">
-          <h3 class="group-label">{group}</h3>
-          {scopes.map((scope) => (
-            <label class="scope-row">
-              <input
-                type="hidden"
-                name="all_scopes"
-                value={scope.id}
-              />
-              <input
-                type="checkbox"
-                name="scope"
-                value={scope.id}
-                checked={grantedSet.has(scope.id)}
-              />
-              <span class="scope-name">{scope.name}</span>
-            </label>
-          ))}
-        </div>
-      ))}
+      <div class="scope-table-wrap">
+        {grouped.map(({ group, scopes }) => (
+          <table class="scope-table">
+            <thead>
+              <tr>
+                <th class="col-check">
+                  <input
+                    type="checkbox"
+                    class="group-toggle"
+                    aria-label={`${group} csoport mind`}
+                    data-group={group}
+                    checked={scopes.every((s) => grantedMap.has(s.id))}
+                  />
+                </th>
+                <th class="col-group" colspan="2">{group}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scopes.map((s) => (
+                <tr class={grantedMap.has(s.id) ? "granted" : ""}>
+                  <td class="col-check">
+                    <input type="hidden" name="all_scopes" value={s.id} />
+                    <input
+                      type="checkbox"
+                      name="scope"
+                      value={s.id}
+                      class="scope-cb"
+                      data-group={group}
+                      checked={grantedMap.has(s.id)}
+                    />
+                  </td>
+                  <td class="col-name">
+                    <span class="scope-prefix">{group}.</span>{s.name.slice(group.length + 1)}
+                  </td>
+                  <td class="col-date">
+                    {s.grantedAt
+                      ? <span class="date-tag">{s.grantedAt.slice(0, 10)}</span>
+                      : <span class="date-empty">–</span>
+                    }
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ))}
+      </div>
 
-      <button type="submit" class="btn btn-primary">Mentés</button>
+      <div class="form-footer">
+        <button type="submit" class="btn btn-primary">Változtatások mentése</button>
+      </div>
     </form>
   </section>
 </AdminLayout>
+
+<script>
+  // Group toggle: check/uncheck all scopes in a group
+  document.querySelectorAll<HTMLInputElement>(".group-toggle").forEach((toggle) => {
+    toggle.addEventListener("change", () => {
+      const group = toggle.dataset.group;
+      document.querySelectorAll<HTMLInputElement>(`.scope-cb[data-group="${group}"]`)
+        .forEach((cb) => { cb.checked = toggle.checked; });
+    });
+  });
+
+  // Sync group toggle when individual scope changes
+  document.querySelectorAll<HTMLInputElement>(".scope-cb").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const group = cb.dataset.group;
+      const all = Array.from(document.querySelectorAll<HTMLInputElement>(`.scope-cb[data-group="${group}"]`));
+      const toggle = document.querySelector<HTMLInputElement>(`.group-toggle[data-group="${group}"]`);
+      if (toggle) toggle.checked = all.every((c) => c.checked);
+    });
+  });
+</script>
+
+<style>
+  /* ── Page header ── */
+  .page-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+  }
+  .back-link { font-size: 0.875rem; color: #01696f; text-decoration: none; white-space: nowrap; }
+  .back-link:hover { text-decoration: underline; }
+  .page-header h1 { margin: 0; font-size: 1.4rem; }
+  .email-sub { margin: 0; font-size: 0.8rem; color: #888; }
+  .status-badge {
+    margin-left: auto;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .status-badge.active   { background: #e6f4ea; color: #1e7e34; border: 1px solid #a8d5b5; }
+  .status-badge.inactive { background: #fce8e6; color: #b71c1c; border: 1px solid #f5c6c6; }
+
+  /* ── Feedback ── */
+  .feedback {
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+    background: #e6f4ea;
+    color: #1e7e34;
+    border: 1px solid #a8d5b5;
+  }
+  .feedback.error { background: #fce8e6; color: #b71c1c; border-color: #f5c6c6; }
+
+  /* ── Cards ── */
+  .card {
+    border: 1px solid #e0e0e0;
+    border-radius: 0.5rem;
+    margin-bottom: 1.5rem;
+    background: #fff;
+    overflow: hidden;
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: #f8f8f8;
+    border-bottom: 1px solid #e0e0e0;
+  }
+  .card-header h2 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+  .scope-counter { font-size: 0.8rem; color: #666; }
+  .card-body { padding: 0.75rem 1rem; }
+
+  /* ── Status row ── */
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    font-size: 0.875rem;
+    color: #444;
+  }
+
+  /* ── Scope table ── */
+  .scope-table-wrap {
+    display: grid;
+    gap: 0;
+  }
+  .scope-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.855rem;
+  }
+  .scope-table + .scope-table {
+    border-top: 2px solid #e8e8e8;
+  }
+
+  /* Group header row */
+  .scope-table thead tr {
+    background: #f3f3f3;
+  }
+  .scope-table thead th {
+    padding: 0.4rem 0.75rem;
+    text-align: left;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #555;
+    border-bottom: 1px solid #e0e0e0;
+  }
+  .col-group { color: #01696f !important; }
+
+  /* Body rows */
+  .scope-table tbody tr {
+    border-bottom: 1px solid #f0f0f0;
+    transition: background 0.1s;
+  }
+  .scope-table tbody tr:last-child { border-bottom: none; }
+  .scope-table tbody tr:hover { background: #fafafa; }
+  .scope-table tbody tr.granted { background: #f4fbf6; }
+  .scope-table tbody tr.granted:hover { background: #edf7f0; }
+
+  .scope-table td {
+    padding: 0.35rem 0.75rem;
+    vertical-align: middle;
+  }
+
+  .col-check { width: 36px; text-align: center; }
+  .col-name  { font-family: monospace; font-size: 0.82rem; color: #333; }
+  .col-date  { width: 110px; text-align: right; }
+
+  .scope-prefix { color: #aaa; }
+
+  .date-tag {
+    font-size: 0.75rem;
+    color: #1e7e34;
+    background: #e6f4ea;
+    padding: 0.1rem 0.4rem;
+    border-radius: 9999px;
+  }
+  .date-empty { color: #ccc; font-size: 0.75rem; }
+
+  input[type="checkbox"] { cursor: pointer; accent-color: #01696f; width: 15px; height: 15px; }
+
+  /* ── Footer ── */
+  .form-footer {
+    padding: 0.75rem 1rem;
+    border-top: 1px solid #e0e0e0;
+    background: #f8f8f8;
+  }
+
+  /* ── Buttons ── */
+  .btn {
+    font: inherit;
+    padding: 0.4rem 1rem;
+    border-radius: 0.375rem;
+    border: none;
+    cursor: pointer;
+    font-size: 0.875rem;
+  }
+  .btn-primary { background: #01696f; color: #fff; }
+  .btn-primary:hover { background: #0c4e54; }
+  .btn-danger  { background: #fce8e6; color: #b71c1c; border: 1px solid #f5c6c6; }
+  .btn-danger:hover  { background: #f5c6c6; }
+</style>
