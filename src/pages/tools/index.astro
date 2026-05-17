@@ -1,84 +1,73 @@
 ---
 import AdminLayout from "../../components/AdminLayout.astro";
 import { fetchToolsFromMcp } from "../../utils/tools";
-import { listAllUsers } from "../../utils/users";
 
 const env = Astro.locals.runtime.env;
 const query = Astro.url.searchParams;
 const search = query.get("q")?.trim().toLowerCase() ?? "";
 
-const [tools, users] = await Promise.all([fetchToolsFromMcp(env), listAllUsers(env.USERS_KV)]);
+const tools = await fetchToolsFromMcp(env);
 const filteredTools = tools.filter((tool) => tool.name.toLowerCase().includes(search));
-
-const enabledCounts = new Map<string, number>();
-for (const user of users) {
-for (const toolName of user.tools) {
-enabledCounts.set(toolName, (enabledCounts.get(toolName) ?? 0) + 1);
-}
-}
 ---
 
-<AdminLayout title="Toolok" description="MCP toolok áttekintése és engedélyezés kezelése">
-<h1>MCP Toolok</h1>
+<AdminLayout title="Toolok" description="MCP toolok áttekintése">
+	<h1>MCP Toolok</h1>
 
-<form method="get" class="filter-form">
-<label for="q">Tool név keresés</label>
-<input id="q" name="q" type="search" value={query.get("q") ?? ""} placeholder="pl. tools/list" />
-<button type="submit">Keresés</button>
-</form>
+	<form method="get" class="filter-form">
+		<label for="q">Tool név keresés</label>
+		<input id="q" name="q" type="search" value={query.get("q") ?? ""} placeholder="pl. tools/list" />
+		<button type="submit">Keresés</button>
+	</form>
 
-<table>
-<thead>
-<tr>
-<th>Név</th>
-<th>Leírás</th>
-<th>Engedélyezett felhasználók száma</th>
-</tr>
-</thead>
-<tbody>
-{filteredTools.length === 0 ? (
-<tr>
-<td colspan="3">Nincs megjeleníthető tool. Ellenőrizd a MCP_SERVER_URL beállítást.</td>
-</tr>
-) : (
-filteredTools.map((tool) => (
-<tr>
-<td><a href={`/tools/${encodeURIComponent(tool.name)}`}>{tool.name}</a></td>
-<td>{tool.description || "-"}</td>
-<td>{enabledCounts.get(tool.name) ?? 0}</td>
-</tr>
-))
-)}
-</tbody>
-</table>
+	<table>
+		<thead>
+			<tr>
+				<th>Név</th>
+				<th>Leírás</th>
+			</tr>
+		</thead>
+		<tbody>
+			{filteredTools.length === 0 ? (
+				<tr>
+					<td colspan="2">Nincs megjeleníthető tool. Ellenőrizd a MCP_SERVER_URL beállítást.</td>
+				</tr>
+			) : (
+				filteredTools.map((tool) => (
+					<tr>
+						<td><a href={`/tools/${encodeURIComponent(tool.name)}`}>{tool.name}</a></td>
+						<td>{tool.description || "-"}</td>
+					</tr>
+				))
+			)}
+		</tbody>
+	</table>
 </AdminLayout>
 
 <style>
-.filter-form {
-display: grid;
-gap: 0.75rem;
-margin-bottom: 1rem;
-}
+	.filter-form {
+		display: grid;
+		gap: 0.75rem;
+		margin-bottom: 1rem;
+	}
 
-label {
-display: grid;
-gap: 0.35rem;
-}
+	label {
+		display: grid;
+		gap: 0.35rem;
+	}
 
-input,
-button {
-font: inherit;
-padding: 0.5rem;
-}
+	input, button {
+		font: inherit;
+		padding: 0.5rem;
+	}
 
-table {
-border-collapse: collapse;
-}
+	table {
+		border-collapse: collapse;
+		width: 100%;
+	}
 
-th,
-td {
-border: 1px solid rgb(var(--gray-light));
-padding: 0.5rem;
-vertical-align: top;
-}
+	th, td {
+		border: 1px solid #ddd;
+		padding: 0.5rem;
+		vertical-align: top;
+	}
 </style>
