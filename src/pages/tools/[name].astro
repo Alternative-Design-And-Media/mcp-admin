@@ -1,109 +1,75 @@
 ---
 import AdminLayout from "../../components/AdminLayout.astro";
 import { fetchToolsFromMcp } from "../../utils/tools";
-import { listAllUsers, updateToolMembership } from "../../utils/users";
 
 const env = Astro.locals.runtime.env;
 const encodedName = Astro.params.name ?? "";
 let toolName = "";
 
 try {
-toolName = decodeURIComponent(encodedName);
+	toolName = decodeURIComponent(encodedName);
 } catch {
-return Astro.redirect("/tools");
+	return Astro.redirect("/tools");
 }
 
-let feedback = "";
-const [tools, users] = await Promise.all([fetchToolsFromMcp(env), listAllUsers(env.USERS_KV)]);
+const tools = await fetchToolsFromMcp(env);
 const tool = tools.find((candidate) => candidate.name === toolName);
 
 if (!tool) {
-return Astro.redirect("/tools");
+	return Astro.redirect("/tools");
 }
-
-if (Astro.request.method === "POST") {
-const formData = await Astro.request.formData();
-const enabledUsers = formData
-.getAll("enabledUsers")
-.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-await updateToolMembership(env.USERS_KV, toolName, enabledUsers);
-feedback = "Tool engedélyezések mentve.";
-}
-
-const refreshedUsers = await listAllUsers(env.USERS_KV);
-const enabledSet = new Set(
-refreshedUsers.filter((user) => user.tools.includes(toolName)).map((user) => user.email),
-);
 ---
 
-<AdminLayout title={`Tool: ${toolName}`} description="Tool részletek és engedélyek kezelése">
-<h1>{toolName}</h1>
-<p><a href="/tools">← Vissza a tool listához</a></p>
+<AdminLayout title={`Tool: ${toolName}`} description="Tool részletek">
+	<p><a href="/tools">&larr; Vissza a tool listához</a></p>
+	<h1>{toolName}</h1>
 
-{feedback && <p class="ok-message">{feedback}</p>}
+	<section>
+		<h2>Leírás</h2>
+		<p>{tool.description || "Nincs leírás."}</p>
+	</section>
 
-<section>
-<h2>Leírás</h2>
-<p>{tool.description || "Nincs leírás."}</p>
-</section>
+	<section>
+		<h2>Input séma</h2>
+		<pre><code>{JSON.stringify(tool.inputSchema, null, 2)}</code></pre>
+	</section>
 
-<section>
-<h2>Input séma</h2>
-<pre><code>{JSON.stringify(tool.inputSchema, null, 2)}</code></pre>
-</section>
-
-<section>
-<h2>Engedélyezett felhasználók</h2>
-<form method="post" class="permissions-form">
-<ul>
-{refreshedUsers.length === 0 ? (
-<li>Nincs felhasználó.</li>
-) : (
-refreshedUsers.map((user) => (
-<li>
-<label>
-<input
-type="checkbox"
-name="enabledUsers"
-value={user.email}
-checked={enabledSet.has(user.email)}
-/>
-{user.email}
-</label>
-</li>
-))
-)}
-</ul>
-<button type="submit">Mentés</button>
-</form>
-</section>
+	<section>
+		<div class="mock-banner">
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+				<circle cx="12" cy="12" r="10"/>
+				<line x1="12" y1="8" x2="12" y2="12"/>
+				<line x1="12" y1="16" x2="12.01" y2="16"/>
+			</svg>
+			<span>Az engedélyezett felhasználók kezelése fejlesztés alatt áll.</span>
+		</div>
+	</section>
 </AdminLayout>
 
 <style>
-pre {
-overflow: auto;
-max-height: 24rem;
-}
+	pre {
+		overflow: auto;
+		max-height: 24rem;
+		background: #f5f5f5;
+		padding: 1rem;
+		border-radius: 0.5rem;
+		font-size: 0.85rem;
+	}
 
-.permissions-form ul {
-list-style: none;
-padding: 0;
-display: grid;
-gap: 0.5rem;
-}
+	.mock-banner {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		background: #fff8e1;
+		border: 1px solid #f9a825;
+		border-radius: 0.5rem;
+		padding: 0.75rem 1rem;
+		color: #7a5c00;
+		font-size: 0.9rem;
+	}
 
-.permissions-form label {
-display: flex;
-gap: 0.5rem;
-align-items: center;
-}
-
-button {
-font: inherit;
-padding: 0.5rem;
-}
-
-.ok-message {
-color: #146c2e;
-}
+	.mock-banner svg {
+		flex-shrink: 0;
+		color: #f9a825;
+	}
 </style>
