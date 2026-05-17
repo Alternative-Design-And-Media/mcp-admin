@@ -1,0 +1,45 @@
+# mcp-admin
+
+> Admin dashboard az adam-mcp MCP szerver kezeléséhez. Astro 5 SSR + Cloudflare Workers, D1 adatbázis és R2 tárhely.
+
+Az **mcp-admin** egy belső admin felület, amely az `adam-mcp` Cloudflare Worker MCP szerver adatait jeleníti meg és kezeli. Token-alapú hitelesítéssel, HMAC-aláírt session cookie-val védett. Minden oldal SSR módban fut Cloudflare Workers-en.
+
+## Főbb funkciók
+
+- **Dashboard** (`/`): KPI kártyák (napi hívások, tiltott hívások, aktív felhasználók, leghívottabb tool), 30 napos trendiagram, top 10 tool, top 5 felhasználó, legutóbbi audit-események.
+- **Audit logok** (`/logs`): D1-alapú auditnapló-böngésző szűrőkkel (felhasználó, tool, dátumtartomány, engedélyezett/tiltott állapot), lapozással, CSV exporttal.
+- **Felhasználók** (`/users`): Felhasználók listázása, létrehozása, aktiválása/letiltása; scope-jogosultságok (grant/revoke) kezelése.
+- **Handoverek** (`/handovers`): R2-alapú handover-fájl böngésző prefix szűrővel, lapozással, fájlletöltéssel.
+- **Toolok** (`/tools`): MCP tool-regiszter böngésző scope-leképezéssel.
+- **Hitelesítés** (`/login`, `/logout`): POST-alapú token bejelentkezés; HMAC-SHA256 aláírt, HttpOnly, Secure, SameSite=Strict session cookie; middleware védi az összes többi útvonalat.
+
+## Cloudflare binding-ok
+
+- `DATABASE` – D1 adatbázis (`adam-mcp`): users, scopes, tools, user_scope_permissions, audit_logs táblák
+- `AUDIT_LOGS` – R2 bucket (`adam-mcp-audit-log`): R2-alapú audit log fájlok (legacy)
+- `HANDOVERS` – R2 bucket (`adam-mcp-handovers`): handover dokumentumok
+
+## Worker titkok
+
+- `ADMIN_TOKEN` – bejelentkezési token
+- `SESSION_SECRET` – HMAC aláírókulcs
+
+## Tech stack
+
+- Astro 5.x, SSR mód, `@astrojs/cloudflare` adapter
+- TypeScript 5.x
+- Cloudflare Workers (Wrangler 4.x)
+- Cloudflare D1 (SQLite), Cloudflare R2
+- Nincs külső UI framework (vanilla Astro + CSS)
+
+## Dokumentáció
+
+- [README.md](README.md): Teljes dokumentáció, séma, útvonalak, parancsok
+- [migrations/0001_initial_schema.sql](migrations/0001_initial_schema.sql): D1 séma és seed adatok
+- [wrangler.json](wrangler.json): Cloudflare Worker konfiguráció
+- [src/middleware.ts](src/middleware.ts): Session hitelesítés middleware
+- [src/utils/auth.ts](src/utils/auth.ts): HMAC session cookie logika
+- [src/utils/audit.ts](src/utils/audit.ts): D1 audit log és dashboard statisztikák
+- [src/utils/users.ts](src/utils/users.ts): D1 felhasználó és scope-jogosultság kezelés
+- [src/utils/tools.ts](src/utils/tools.ts): D1 tool és scope lekérdezések
+- [src/utils/logs.ts](src/utils/logs.ts): R2 audit log olvasás (legacy)

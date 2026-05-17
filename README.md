@@ -1,76 +1,116 @@
-# Astro Starter Kit: Blog
+# mcp-admin
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/templates/tree/main/astro-blog-starter-template)
+Admin dashboard az **adam-mcp** MCP szerver kezeléséhez. Astro 5 (SSR) + Cloudflare Workers alapú webalkalmazás.
 
-![Astro Template Preview](https://github.com/withastro/astro/assets/2244813/ff10799f-a816-4703-b967-c78997e8323d)
+## Funkciók
 
-<!-- dash-content-start -->
+- 📊 **Dashboard** – KPI kártyák (napi hívások, tiltott hívások, aktív felhasználók, leghívottabb tool), 30 napos trendiagram, top 10 tool, top 5 felhasználó, legutóbbi események
+- 📋 **Audit logok** – D1-alapú auditnapló-böngésző szűrőkkel (felhasználó, tool, dátumtartomány, állapot), lapozással és CSV exporttal
+- 👥 **Felhasználók** – Felhasználók listázása, létrehozása, aktiválása/letiltása, scope-jogosultságok kezelése
+- 📁 **Handoverek** – R2-alapú handover-fájl böngésző prefix szűrővel, lapozással és letöltéssel
+- 🔧 **Toolok** – MCP tool-regiszter böngésző scope-információkkal
+- 🔐 **Hitelesítés** – Token-alapú bejelentkezés, HMAC-aláírt HttpOnly session cookie, middleware-védelem
 
-Create a blog with Astro and deploy it on Cloudflare Workers as a [static website](https://developers.cloudflare.com/workers/static-assets/).
+## Cloudflare erőforrások
 
-Features:
+| Binding      | Típus | Neve                  |
+| :----------- | :---- | :-------------------- |
+| `DATABASE`   | D1    | `adam-mcp`            |
+| `AUDIT_LOGS` | R2    | `adam-mcp-audit-log`  |
+| `HANDOVERS`  | R2    | `adam-mcp-handovers`  |
 
-- ✅ Minimal styling (make it your own!)
-- ✅ 100/100 Lighthouse performance
-- ✅ SEO-friendly with canonical URLs and OpenGraph data
-- ✅ Sitemap support
-- ✅ RSS Feed support
-- ✅ Markdown & MDX support
-- ✅ Built-in Observability logging
+## Adatbázis séma (D1)
 
-<!-- dash-content-end -->
-
-## Getting Started
-
-Outside of this repo, you can start a new project with this template using [C3](https://developers.cloudflare.com/pages/get-started/c3/) (the `create-cloudflare` CLI):
-
-```bash
-npm create cloudflare@latest -- --template=cloudflare/templates/astro-blog-starter-template
+```
+users              (id, email, display_name, is_active, created_at, last_login)
+scopes             (id, name)                          — pl. rentman.equipment.read, odoo.read
+tools              (name PK, scope_id FK)              — MCP tool → scope leképezés
+user_scope_perms   (user_id FK, scope_id FK)           — scope-engedély felhasználónként
+audit_logs         (id, ts, user_id FK, tool_name, allowed, request_id)
 ```
 
-A live public deployment of this template is available at [https://astro-blog-starter-template.templates.workers.dev](https://astro-blog-starter-template.templates.workers.dev)
+Az aktuális séma és seed adatok: [`migrations/0001_initial_schema.sql`](migrations/0001_initial_schema.sql)
 
-## 🚀 Project Structure
+## 🔐 Hitelesítési titkok
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+Az admin útvonalakat token-alapú hitelesítés védi. Ezeket Worker-titkokként kell beállítani, soha ne kerüljenek a forráskódba:
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
-
-The `src/content/` directory contains "collections" of related Markdown and MDX documents. Use `getCollection()` to retrieve posts from `src/content/blog/`, and type-check your frontmatter using an optional schema. See [Astro's Content Collections docs](https://docs.astro.build/en/guides/content-collections/) to learn more.
-
-Any static assets, like images, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                           | Action                                           |
-| :-------------------------------- | :----------------------------------------------- |
-| `npm install`                     | Installs dependencies                            |
-| `npm run dev`                     | Starts local dev server at `localhost:4321`      |
-| `npm run build`                   | Build your production site to `./dist/`          |
-| `npm run preview`                 | Preview your build locally, before deploying     |
-| `npm run astro ...`               | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help`         | Get help using the Astro CLI                     |
-| `npm run build && npm run deploy` | Deploy your production site to Cloudflare        |
-| `npm wrangler tail`               | View real-time logs for all Workers              |
-
-## 🔐 Admin authentication secrets
-
-The admin routes are protected with token-based authentication in SSR mode. Configure these as Worker secrets (or dashboard secrets), never in source code:
-
-- `ADMIN_TOKEN` – login token checked on `/login`
-- `SESSION_SECRET` – HMAC signing secret for the `HttpOnly` session cookie
+- `ADMIN_TOKEN` – bejelentkezési token (`/login`)
+- `SESSION_SECRET` – HMAC aláírókulcs a `HttpOnly` session cookie-hoz
 
 ```bash
 npx wrangler secret put ADMIN_TOKEN
 npx wrangler secret put SESSION_SECRET
 ```
 
-## 👀 Want to learn more?
+## 🧞 Parancsok
 
-Check out [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+| Parancs                           | Művelet                                                     |
+| :-------------------------------- | :---------------------------------------------------------- |
+| `npm install`                     | Függőségek telepítése                                       |
+| `npm run dev`                     | Fejlesztői szerver indítása (`localhost:4321`)              |
+| `npm run build`                   | Produkciós build (`./dist/`)                                |
+| `npm run preview`                 | Build előnézete Wrangler dev szerverrel                     |
+| `npm run check`                   | Teljes ellenőrzés: astro build + tsc + wrangler dry-run     |
+| `npm run deploy`                  | Deploy Cloudflare Workers-re                                |
+| `npm run cf-typegen`              | Cloudflare típusdefiníciók generálása                       |
 
-## Credit
+## 🗂 Projekt struktúra
 
-This theme is based off of the lovely [Bear Blog](https://github.com/HermanMartinus/bearblog/).
+```
+src/
+├── components/
+│   ├── AdminLayout.astro     # Fő layout (Header + Footer + slot)
+│   ├── BaseHead.astro        # HTML <head> meta tagek
+│   ├── Header.astro          # Navigációs sáv
+│   └── Footer.astro
+├── pages/
+│   ├── index.astro           # Dashboard
+│   ├── login.astro           # Bejelentkezési oldal
+│   ├── logout.ts             # POST → session törlés
+│   ├── logs/
+│   │   ├── index.astro       # Audit log lista + szűrők
+│   │   ├── [id].astro        # Egyedi log bejegyzés
+│   │   └── export.csv.ts     # CSV export endpoint
+│   ├── users/
+│   │   ├── index.astro       # Felhasználók listája + létrehozás
+│   │   ├── [email].astro     # Felhasználó részletei + jogosultságok
+│   │   └── import.astro      # Tömeges import
+│   ├── handovers/
+│   │   ├── index.astro       # Handover-fájlok listája
+│   │   └── download.ts       # R2 fájl letöltés
+│   └── tools/
+│       ├── index.astro       # Tool-lista
+│       └── [name].astro      # Tool részletei
+├── utils/
+│   ├── auth.ts               # Session cookie kezelés (HMAC-SHA256)
+│   ├── audit.ts              # D1 audit log lekérdezések + dashboard statisztikák
+│   ├── users.ts              # D1 felhasználó és scope-jogosultság kezelés
+│   ├── logs.ts               # R2 audit log olvasás (legacy)
+│   └── tools.ts              # D1 tool és scope lekérdezések
+├── middleware.ts             # Session-ellenőrzés minden útvonalra
+└── consts.ts                 # SITE_TITLE, SITE_DESCRIPTION
+migrations/
+└── 0001_initial_schema.sql   # Teljes séma + seed adatok
+wrangler.json                 # Cloudflare Worker konfiguráció
+```
+
+## Útvonalak
+
+| Útvonal             | Leírás                                      |
+| :------------------ | :------------------------------------------ |
+| `GET /`             | Dashboard (KPI, trendek, top listák)        |
+| `GET /login`        | Bejelentkezési űrlap                        |
+| `POST /login`       | Token ellenőrzés, session beállítás         |
+| `POST /logout`      | Session törlés, átirányítás `/login`-ra     |
+| `GET /logs`         | Audit log lista (szűrők, lapozás)           |
+| `GET /logs/[id]`    | Egyedi audit log bejegyzés                  |
+| `GET /logs/export.csv` | Szűrt audit logok CSV exportja           |
+| `GET /users`        | Felhasználók listája                        |
+| `POST /users`       | Új felhasználó létrehozása                  |
+| `GET /users/[email]` | Felhasználó részletei + scope-jogosultságok |
+| `POST /users/[email]` | Aktiválás/letiltás, jogosultság-módosítás  |
+| `GET /handovers`    | Handover-fájlok böngészője                  |
+| `GET /handovers/download` | R2 fájl letöltése                     |
+| `GET /tools`        | MCP tool-regiszter listája                  |
+| `GET /tools/[name]` | Tool részletei                              |
