@@ -7,6 +7,18 @@
 		"directory": "./dist",
 		"binding": "ASSETS"
 	},
+	"kv_namespaces": [
+		{
+			"binding": "USERS_KV",
+			"id": "REPLACE_WITH_USERS_KV_NAMESPACE_ID"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "AUDIT_LOGS",
+			"bucket_name": "REPLACE_WITH_AUDIT_LOGS_BUCKET_NAME"
+		}
+	],
 	"observability": {
 		"enabled": true
 	},
